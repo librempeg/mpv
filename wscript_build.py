@@ -737,6 +737,9 @@ def build(ctx):
         if ctx.env.BASHDIR:
             ctx.install_as(ctx.env.BASHDIR + '/mpv', 'etc/mpv.bash-completion')
 
+        if ctx.env.FISHDIR:
+            ctx.install_as(ctx.env.FISHDIR + '/mpv.fish', 'etc/mpv.fish')
+
         ctx.install_files(
             ctx.env.DATADIR + '/applications',
             ['etc/mpv.desktop'] )

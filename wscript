@@ -865,6 +865,7 @@ _INSTALL_DIRS_LIST = [
     ('zshdir',  '${DATADIR}/zsh/site-functions', 'zsh completion functions'),
     ('confloaddir', '${CONFDIR}', 'configuration files load directory'),
     ('bashdir', '${DATADIR}/bash-completion/completions', 'bash completion functions'),
+    ('fishdir', '${DATADIR}/fish/vendor_completions.d', 'fish completion functions'),
 ]
 
 def options(opt):
