@@ -4970,13 +4970,15 @@ static void cmd_frame_step(void *p)
 {
     struct mp_cmd_ctx *cmd = p;
     struct MPContext *mpctx = cmd->mpctx;
+    int frames = cmd->args[0].v.i;
+    int flags = cmd->args[1].v.i;
 
-    if (!mpctx->playback_initialized) {
+    if (!mpctx->playback_initialized || frames == 0) {
         cmd->success = false;
         return;
     }
 
-    if (cmd->cmd->is_up_down) {
+    if (frames > 0 && !flags && cmd->cmd->is_up_down) {
         if (cmd->cmd->is_up) {
             if (mpctx->step_frames < 1)
                 set_pause_state(mpctx, true);
@@ -4984,25 +4986,23 @@ static void cmd_frame_step(void *p)
             if (cmd->cmd->repeated) {
                 set_pause_state(mpctx, false);
             } else {
-                add_step_frame(mpctx, 1);
+                add_step_frame(mpctx, frames, flags);
             }
         }
     } else {
-        add_step_frame(mpctx, 1);
+        add_step_frame(mpctx, frames, flags);
     }
 }
 
 static void cmd_frame_back_step(void *p)
 {
     struct mp_cmd_ctx *cmd = p;
-    struct MPContext *mpctx = cmd->mpctx;
-
-    if (!mpctx->playback_initialized) {
-        cmd->success = false;
-        return;
-    }
-
-    add_step_frame(mpctx, -1);
+    struct mp_cmd_arg frames = {.v.i = -1};
+    struct mp_cmd_arg flags = {.v.i = 0};
+    cmd->args = talloc_realloc(cmd, cmd->args, struct mp_cmd_arg, 2);
+    cmd->args[0] = frames;
+    cmd->args[1] = flags;
+    cmd_frame_step(cmd);
 }
 
 static void cmd_quit(void *p)
@@ -6066,8 +6066,17 @@ const struct mp_cmd_def mp_cmds[] = {
     { "stop", cmd_stop,
         { {"flags", OPT_FLAGS(v.i, {"keep-playlist", 1}), .flags = MP_CMD_OPT_ARG} }
     },
-    { "frame-step", cmd_frame_step, .allow_auto_repeat = true,
-        .on_updown = true },
+    { "frame-step", cmd_frame_step,
+        {
+            {"frames", OPT_INT(v.i), OPTDEF_INT(1)},
+            {"flags", OPT_CHOICE(v.i,
+                    {"play", 0},
+                    {"seek", 1}),
+                    .flags = MP_CMD_OPT_ARG},
+        },
+        .allow_auto_repeat = true,
+        .on_updown = true
+    },
     { "frame-back-step", cmd_frame_back_step, .allow_auto_repeat = true },
     { "playlist-next", cmd_playlist_next_prev,
         {
