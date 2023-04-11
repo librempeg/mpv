@@ -1,33 +1,13 @@
-import logging
+import mpvmainloop, time
 
-import mpvmainloop
+def log_handle(lname: str, *args):
+    mpvmainloop.handle_log([lname, ' '.join([str(msg) for msg in args])])
 
-import time
-MPV_EVENT_WAIT_TIMEOUT = 1
-
-from enum import IntEnum
-
-logger = logging.getLogger('mainloop')
+def test_warn(*args):
+    log_handle('warn', *args)
 
 
-class MpvHandler(logging.StreamHandler):
-
-    def emit(self, record):
-        lname = record.levelname.lower()
-        if lname == 'warning':
-            lname = 'warn'
-        if lname == 'critical':
-            lname = 'fatal'
-        empty_str = ''
-        mpvmainloop.handle_log([lname, str(record.msg)])
-
-logger.addHandler(MpvHandler())
-logger.setLevel(logging.DEBUG)
-logger.propagate = False
-
-logger.debug("logger set")
-
-class events(IntEnum):
+class MainLoop(object):
     MPV_EVENT_NONE = 0
     MPV_EVENT_SHUTDOWN = 1
     MPV_EVENT_LOG_MESSAGE = 2
@@ -46,8 +26,26 @@ class events(IntEnum):
     MPV_EVENT_QUEUE_OVERFLOW = 24
     MPV_EVENT_HOOK = 25
 
+    def sleep(self, sec):
+        from time import sleep
+        sleep(sec)
 
-class MainLoop:
+    def info(self, *args):
+        mpvmainloop.handle_log(['info', ' '.join([str(msg) for msg in args])])
+
+    def debug(self, *args):
+        mpvmainloop.handle_log(['debug', ' '.join([str(msg) for msg in args])])
+
+    def warn(self, *args):
+        mpvmainloop.handle_log(['warn', ' '.join([str(msg) for msg in args])])
+
+    def error(self, *a):
+        mpvmainloop.handle_log(['error', ' '.join([str(msg) for msg in args])])
+
+    def fatal(self, *a):
+        mpvmainloop.handle_log(['fatal', ' '.join([str(msg) for msg in args])])
+
+
     clients: list[str] = []
 
     def __init__(self, clients):
@@ -65,33 +63,30 @@ class MainLoop:
             boolean specifing whether some event loop breaking
             condition has been satisfied.
         """
-        # logger.warning(f"received event #{event_id}")
-        # if event_id == events.MPV_EVENT_SHUTDOWN:
-        if event_id == 1:
-            print("shutting down python")
+        if event_id == self.MPV_EVENT_SHUTDOWN:
+            self.info("shutting down python")
             return True
         return False
 
     def wait_events(self):
         while True:
-            event_id = mpvmainloop.wait_event(1)
+            event_id = mpvmainloop.wait_event(100)
             if self.handle_event(event_id):
                 break
 
-    def run_in_separate_thread(self):
-        self.thread = True
-        threading.Thread(target=self.run).start()
-
     def run(self):
+        # self.debug("sleeping 1 sec")
+        # self.sleep(1)  # this works
+        # time.sleep(1)  # but this doesn't
+        # conclusion, PyRun_* looses the global frame.
+        # self.debug("slept 1 sec")
         self.wait_events()
+        # mpvmainloop.handle_log(["warn", "initiating shutdown sequence"])
         self.shutdown()
 
     def shutdown(self):
-        if self.thread:
-            main_thread = threading.main_thread()
-            main_thread.join()
         mpvmainloop.shutdown()
-clss = globals()['clients']
-ml = MainLoop(clss)
-logger.debug("running main loop")
+
+ml = MainLoop(globals()['clients'])
+ml.debug("running main loop")
 ml.run()

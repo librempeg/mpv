@@ -60,7 +60,7 @@
 
 // List of builtin modules and their contents as strings.
 // All these are generated from player/python/*.py
-static const char *const builtin_files[][3] = {
+static const char *const builtin_files[][2] = {
     {"@/defaults.py",
 #   include "generated/player/python/defaults.py.inc"
     },
@@ -108,6 +108,10 @@ static PyTypeObject PyScriptCtx_Type = {
 // module and type def
 /* ========================================================================== */
 
+PyThreadState *mainThread;
+PyObject *PyInit_mpv(void);
+PyObject *PyInit_mpvmainloop(void);
+
 static PyObject *MpvError;
 
 typedef struct {
@@ -121,17 +125,6 @@ typedef struct {
 static PyTypeObject PyMpv_Type;
 
 #define PyCtxObject_Check(v)      Py_IS_TYPE(v, &PyMpv_Type)
-
-static PyMpvObject *
-newPyMpvObject(PyObject *args)
-{
-    PyMpvObject *self;
-    self = PyObject_New(PyMpvObject, &PyMpv_Type);
-    if (self == NULL)
-        return NULL;
-    self->pympv_attr = NULL;
-    return self;
-}
 
 
 static void
@@ -224,10 +217,17 @@ mpvmainloop_wait_event(PyObject *mpvmainloop, PyObject *args)
 static PyObject *
 mainloop_shutdown(PyObject *mpvmainloop, PyObject *args)
 {
-    PyScriptCtx *ctx = (PyScriptCtx *)PyObject_GetAttrString(mpvmainloop, "context");
-    for (size_t i = 0; i < ctx->script_count; i++) {
-        Py_EndInterpreter(threads[i]);
-    }
+    // PyScriptCtx *ctx = (PyScriptCtx *)PyObject_GetAttrString(mpvmainloop, "context");
+    // for (size_t i = 0; i < ctx->script_count; i++) {
+    //     PyThreadState *childThread = threads[i];
+    //     PyThreadState_Swap(childThread);
+    //     PyInterpreterState *childInterpreter = PyInterpreterState_Get();
+    //     PyInterpreterState_Clear(childInterpreter);
+    //     // PyThreadState_Clear(childThread);
+    //     Py_EndInterpreter(childThread);
+    //     // PyThreadState_Swap(mainThread);
+    // }
+    // PyThreadState_Swap(mainThread);
     Py_RETURN_NONE;
 }
 
@@ -294,7 +294,7 @@ handle_log(PyObject *mpv, PyObject *args)
     return script_log(log, args);
 }
 
-static void
+static PyObject *
 mainloop_log_handle(PyObject *mpvmainloop, PyObject *args)
 {
     PyScriptCtx *ctx = (PyScriptCtx *)PyObject_GetAttrString(mpvmainloop, "context");
@@ -429,8 +429,6 @@ PyMODINIT_FUNC PyInit_mpvmainloop(void)
 
 /* ========================================================================== */
 
-PyThreadState *mainThread;
-
 static int
 initialize_python(PyScriptCtx *ctx)
 {
@@ -519,7 +517,6 @@ initialize_python(PyScriptCtx *ctx)
     }
     talloc_free(ctx->scripts);
 
-
     PyObject *mpvmainloop = PyImport_ImportModule("mpvmainloop");
     if (PyModule_AddObjectRef(mpvmainloop, "context", (PyObject *)ctx) < 0) {
         mp_msg(ctx->log, mp_msg_find_level("error"), "Error: %s.\n", "cound not set up context for the module mpvmainloop");
@@ -541,6 +538,8 @@ initialize_python(PyScriptCtx *ctx)
     PyDict_SetItemString(globals, "mpvmainloop", mpvmainloop);
     PyDict_SetItemString(globals, "clients", clnts);
     PyRun_String(builtin_files[1][1], Py_file_input, globals, locals);
+    // PyObject *compiled = Py_CompileString(builtin_files[1][1], "mainloop.py", Py_file_input);
+    // PyEval_EvalCode(compiled, globals, locals);
     Py_DECREF(mpvmainloop);
     Py_DECREF(globals);
     Py_DECREF(locals);
