@@ -311,19 +311,8 @@ static int64_t mp_load_python_scripts(struct MPContext *mpctx, char **py_scripts
     int64_t id = mpv_client_id(arg->client);
 
     MP_DBG(arg, "Loading python scripts...\n");
-
-    // if (backend->no_thread) {
-    //     run_script(arg);
-    // } else {
-    //     pthread_t thread;
-    //     if (pthread_create(&thread, NULL, script_thread, arg)) {
-    //         mpv_destroy(arg->client);
-    //         talloc_free(arg);
-    //         return -1;
-    //     }
-    // }
     pthread_t thread;
-    // do not wait for return code; let python thread be on it's own
+    // thread detaches itself and never returns
     pthread_create(&thread, NULL, script_thread, arg);
 
     return id;

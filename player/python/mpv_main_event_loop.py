@@ -1,10 +1,4 @@
-import mpvmainloop, time
-
-def log_handle(lname: str, *args):
-    mpvmainloop.handle_log([lname, ' '.join([str(msg) for msg in args])])
-
-def test_warn(*args):
-    log_handle('warn', *args)
+import mpvmainloop
 
 
 class MainLoop(object):
@@ -25,10 +19,6 @@ class MainLoop(object):
     MPV_EVENT_PROPERTY_CHANGE = 22
     MPV_EVENT_QUEUE_OVERFLOW = 24
     MPV_EVENT_HOOK = 25
-
-    def sleep(self, sec):
-        from time import sleep
-        sleep(sec)
 
     def info(self, *args):
         mpvmainloop.handle_log(['info', ' '.join([str(msg) for msg in args])])
@@ -63,9 +53,12 @@ class MainLoop(object):
             boolean specifing whether some event loop breaking
             condition has been satisfied.
         """
+        self.debug(f"event_id: {event_id}")
         if event_id == self.MPV_EVENT_SHUTDOWN:
             self.info("shutting down python")
             return True
+        else:
+            mpvmainloop.notify_client(event_id)
         return False
 
     def wait_events(self):
@@ -75,18 +68,7 @@ class MainLoop(object):
                 break
 
     def run(self):
-        # self.debug("sleeping 1 sec")
-        # self.sleep(1)  # this works
-        # time.sleep(1)  # but this doesn't
-        # conclusion, PyRun_* looses the global frame.
-        # self.debug("slept 1 sec")
+        ml.debug("running main loop")
         self.wait_events()
-        # mpvmainloop.handle_log(["warn", "initiating shutdown sequence"])
-        self.shutdown()
 
-    def shutdown(self):
-        mpvmainloop.shutdown()
-
-ml = MainLoop(globals()['clients'])
-ml.debug("running main loop")
-ml.run()
+ml = MainLoop(mpvmainloop.clients)

@@ -70,8 +70,6 @@ static const char *const builtin_files[][2] = {
     {0}
 };
 
-PyThreadState **threads;
-
 
 // Represents a loaded script. Each has its own Python state.
 typedef struct {
@@ -116,16 +114,23 @@ static PyObject *MpvError;
 
 typedef struct {
     PyObject_HEAD
-    struct mp_log   *log;
-    PyObject        *pympv_attr;
-    PyObject        *mpvm;
-    PyThreadState   *threadState;
+    char                **scripts;
+    size_t              script_count;
+    struct mpv_handle   *client;
+    struct MPContext    *mpctx;
+    struct mp_log       *log;
+    struct stats_ctx    *stats;
+    PyObject            *pympv_attr;
+    PyObject            *pyclient;
+    PyThreadState       *threadState;
 } PyMpvObject;
 
 static PyTypeObject PyMpv_Type;
 
 #define PyCtxObject_Check(v)      Py_IS_TYPE(v, &PyMpv_Type)
 
+PyMpvObject **clients;
+PyThreadState **threads;
 
 static void
 PyMpv_dealloc(PyMpvObject *self)
@@ -214,22 +219,6 @@ mpvmainloop_wait_event(PyObject *mpvmainloop, PyObject *args)
     return ret;
 }
 
-static PyObject *
-mainloop_shutdown(PyObject *mpvmainloop, PyObject *args)
-{
-    // PyScriptCtx *ctx = (PyScriptCtx *)PyObject_GetAttrString(mpvmainloop, "context");
-    // for (size_t i = 0; i < ctx->script_count; i++) {
-    //     PyThreadState *childThread = threads[i];
-    //     PyThreadState_Swap(childThread);
-    //     PyInterpreterState *childInterpreter = PyInterpreterState_Get();
-    //     PyInterpreterState_Clear(childInterpreter);
-    //     // PyThreadState_Clear(childThread);
-    //     Py_EndInterpreter(childThread);
-    //     // PyThreadState_Swap(mainThread);
-    // }
-    // PyThreadState_Swap(mainThread);
-    Py_RETURN_NONE;
-}
 
 static PyObject *
 mpv_extension_ok(PyObject *self, PyObject *args)
@@ -374,13 +363,35 @@ get_client_threadState(PyObject *mpvmainloop, PyObject *args)
     return threadState;
 }
 
+static PyObject *
+notify_client(PyObject *mpvmainloop, PyObject *args)
+{
+    PyObject *event_id = PyTuple_GetItem(args, 0);
+    long eid = PyLong_AsLong(event_id);
+    PyScriptCtx *ctx = (PyScriptCtx *)PyObject_GetAttrString(mpvmainloop, "context");
+    mainThread = PyEval_SaveThread();
+    for (size_t i = 0; i < ctx->script_count; i++) {
+        PyEval_RestoreThread(threads[i]);
+        PyObject *process_event_s = PyUnicode_FromString("process_event");
+        PyObject *mpv = PyObject_GetAttrString(clients[i]->pyclient, "mpv");
+        PyObject *leid = PyLong_FromLong(eid);
+        PyObject_CallMethodOneArg(mpv, process_event_s, leid);
+        Py_DECREF(process_event_s);
+        Py_DECREF(leid);
+        threads[i] = PyEval_SaveThread();
+    }
+    PyEval_RestoreThread(mainThread);
+    Py_RETURN_NONE;
+}
+
+
 static PyMethodDef MpvMainLoop_methods[] = {
     {"wait_event", (PyCFunction)mpvmainloop_wait_event, METH_VARARGS,
      PyDoc_STR("Wrapper around the mpv_wait_event")},
+    {"notify_client", (PyCFunction)notify_client, METH_VARARGS,
+     PyDoc_STR("Notifies the clients in each thread")},
     {"get_client_threadState", (PyCFunction)get_client_threadState, METH_VARARGS,
      PyDoc_STR("Returns the client threadState given a client name")},
-    {"shutdown", (PyCFunction)mainloop_shutdown, METH_VARARGS,
-     PyDoc_STR("Shuts down the python interpreter responsible for the current thread.")},
     {"handle_log", (PyCFunction)mainloop_log_handle, METH_VARARGS,
      PyDoc_STR("handles log records emitted from python thread.")},
     {NULL, NULL, 0, NULL}
@@ -425,9 +436,42 @@ PyMODINIT_FUNC PyInit_mpvmainloop(void)
 }
 
 
-
-
 /* ========================================================================== */
+
+static PyObject *
+load_local_pystrings(const char *string, char *module_name)
+{
+    PyObject *defaults = Py_CompileString(string, module_name, Py_file_input);
+    if (defaults == NULL) {
+        return NULL;
+    }
+    PyObject *defaults_mod = PyImport_ExecCodeModule(module_name, defaults);
+    Py_DECREF(defaults);
+    if (defaults_mod == NULL) {
+        return NULL;
+    }
+    return defaults_mod;
+}
+
+
+static PyObject *
+load_script(PyObject *filename, PyObject *defaults, char *client_name)
+{
+    PyObject *mpv = PyObject_GetAttrString(defaults, "mpv");
+
+    char *string;
+    PyObject *read_script_s = PyUnicode_FromString("read_script");
+    PyObject *pystring = PyObject_CallMethodOneArg(mpv, read_script_s, filename);
+    PyArg_Parse(pystring, "s", &string);
+    Py_DECREF(read_script_s);
+    Py_DECREF(pystring);
+
+    PyObject *client = Py_CompileString(string, client_name, Py_file_input);
+    PyObject *client_mod = PyImport_ExecCodeModule(client_name, client);
+    Py_DECREF(client);
+    return client_mod;
+}
+
 
 static int
 initialize_python(PyScriptCtx *ctx)
@@ -442,10 +486,14 @@ initialize_python(PyScriptCtx *ctx)
         return -1;
     }
 
-    char **clients = talloc_array(NULL, char *, ctx->script_count);
+    char **client_names = talloc_array(NULL, char *, ctx->script_count);
     threads = talloc_array(NULL, PyThreadState *, ctx->script_count);
+    clients = talloc_array(NULL, PyMpvObject *, ctx->script_count);
 
     Py_Initialize();
+
+    // ctx->stats = stats_ctx_create(ctx, ctx->mpctx->global, "script/python");
+    // stats_register_thread_cputime(ctx->stats, "cpu");
 
     for (size_t i = 0; i < ctx->script_count; i++) {
         PyThreadState *threadState = Py_NewInterpreter();
@@ -457,26 +505,31 @@ initialize_python(PyScriptCtx *ctx)
         }
 
         PyObject *filename = PyUnicode_DecodeFSDefault(ctx->scripts[i]);
-        PyObject *globals = PyDict_New();
-        PyObject *locals = PyDict_New();
-        PyDict_SetItemString(globals, "__builtins__", PyEval_GetBuiltins());
 
         PyMpvObject *pyMpv = PyObject_New(PyMpvObject, &PyMpv_Type);
         pyMpv->log = ctx->log;
+        pyMpv->client = ctx->client;
+        pyMpv->mpctx = ctx->mpctx;
+        pyMpv->script_count = ctx->script_count;
 
         PyObject *pympv = PyImport_ImportModule("mpv");
-
         if (PyModule_AddObjectRef(pympv, "context", (PyObject *)pyMpv) < 0) {
             mp_msg(ctx->log, mp_msg_find_level("error"), "Error: %s.\n", "cound not set up context for the module mpv");
             Py_EndInterpreter(threadState);
             return -1;
         };
 
-        PyDict_SetItemString(globals, "__builtins__", PyEval_GetBuiltins());
-        PyDict_SetItemString(globals, "mpv", pympv);
-        PyDict_SetItemString(globals, "filename", filename);
-        const char *default_script = builtin_files[0][1];
-        PyRun_String(default_script, Py_file_input, globals, locals);
+        PyModule_AddObjectRef(pympv, "filename", filename);
+
+        PyObject *defaults = load_local_pystrings(builtin_files[0][1], "mpvclient");
+
+        if (defaults == NULL) {
+            mp_msg(ctx->log, mp_msg_find_level("error"), "Error: %s.\n", "failed to load defaults module");
+            Py_EndInterpreter(threadState);
+            return -1;
+        }
+
+        PyObject *client_name = PyObject_GetAttrString(defaults, "client_name");
 
         PyObject *os = PyImport_ImportModule("os");
         PyObject *path = PyObject_GetAttrString(os, "path");
@@ -491,28 +544,15 @@ initialize_python(PyScriptCtx *ctx)
         }
         Py_DECREF(exists);
 
-        pyMpv->mpvm = pympv;
-
-        FILE *fp = fopen(ctx->scripts[i], "r");
-        PyRun_File(fp, ctx->scripts[i], Py_file_input, globals, locals);
-        fclose(fp);
-
-        PyObject *client_name = PyObject_GetAttrString(pympv, "client_name");
         char *cname;
         PyArg_Parse(client_name, "s", &cname);
-        Py_DECREF(client_name);
+        PyObject *client = load_script(filename, defaults, cname);
 
-        PyObject *threadStateDict = PyThreadState_GetDict();
-        PyDict_SetItemString(threadStateDict, "client_name", client_name);
-        PyDict_SetItemString(threadStateDict, "mpv", pympv);
+        pyMpv->pyclient = client;
 
-        Py_DECREF(threadStateDict);
-
-        Py_DECREF(pympv);
-        Py_DECREF(pyMpv);
-
+        clients[i] = pyMpv;
         threads[i] = PyEval_SaveThread();
-        clients[i] = cname;
+        client_names[i] = cname;
         PyEval_RestoreThread(mainThread);
     }
     talloc_free(ctx->scripts);
@@ -526,23 +566,26 @@ initialize_python(PyScriptCtx *ctx)
     PyObject *clnts = PyList_New(0);
     PyObject *append_s = PyUnicode_FromString("append");
     for (size_t i = 0; i < ctx->script_count; i++) {
-        PyObject_CallMethodOneArg(clnts, append_s, PyUnicode_FromString(clients[i]));
+        PyObject_CallMethodOneArg(clnts, append_s, PyUnicode_FromString(client_names[i]));
     }
 
-    talloc_free(clients);
+    talloc_free(client_names);
 
-    PyObject *globals = PyDict_New();
-    PyObject *locals = PyDict_New();
-    PyDict_SetItemString(globals, "__builtins__", PyEval_GetBuiltins());
+    PyModule_AddObject(mpvmainloop, "clients", clnts);
+    Py_XDECREF(clnts);
 
-    PyDict_SetItemString(globals, "mpvmainloop", mpvmainloop);
-    PyDict_SetItemString(globals, "clients", clnts);
-    PyRun_String(builtin_files[1][1], Py_file_input, globals, locals);
-    // PyObject *compiled = Py_CompileString(builtin_files[1][1], "mainloop.py", Py_file_input);
-    // PyEval_EvalCode(compiled, globals, locals);
+    PyObject *mainloop = load_local_pystrings(builtin_files[1][1], "mainloop");
+    PyObject *ml = PyObject_GetAttrString(mainloop, "ml");
+    PyObject *run_s = PyUnicode_FromString("run");
+    PyObject_CallMethodNoArgs(ml, run_s);
+    Py_DECREF(run_s);
+    Py_DECREF(ml);
+    Py_DECREF(mainloop);
     Py_DECREF(mpvmainloop);
-    Py_DECREF(globals);
-    Py_DECREF(locals);
+
+    talloc_free(clients);
+    talloc_free(threads);
+
     return 0;
 }
 
@@ -560,7 +603,7 @@ static int s_load_python(struct mp_script_args *args)
         return -1;
     };
 
-    Py_Finalize();
+    Py_Finalize(); // closes the sub interpreters, no need for doing it manually
     return 0;
 }
 
@@ -958,6 +1001,4 @@ const struct mp_scripting mp_scripting_py = {
     .name = "python",
     .file_ext = "py",
     .load = s_load_python,
-    // .init_sequence = initialize_python,
-    // .shutdown_sequence = finalize_python,
 };

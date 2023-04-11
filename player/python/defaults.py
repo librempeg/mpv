@@ -2,35 +2,12 @@
 The python wrapper module for the embedded and extended functionalities
 """
 
-import mpv
+
+import mpv as _mpv
 from pathlib import Path
 
-mpv.client_name = Path(globals()['filename']).stem
+client_name = Path(_mpv.filename).stem
 
-
-import logging
-
-
-class MpvHandler(logging.StreamHandler):
-
-    def emit(self, record):
-        lname = record.levelname.lower()
-        if lname == 'warning':
-            lname = 'warn'
-        if lname == 'critical':
-            lname = 'fatal'
-        empty_str = ''
-        mpv.handle_log(
-        [lname, f"({mpv.client_name if hasattr(mpv, 'client_name') else empty_str}) {record.msg}"])
-
-
-for handler in logging.root.handlers:
-    logging.root.removeHandler(handler)
-
-logging.root.addHandler(MpvHandler())
-logging.root.setLevel(logging.DEBUG)
-
-logging.debug(f"initiating {mpv.client_name}")
 
 class Mpv:
     """
@@ -40,13 +17,35 @@ class Mpv:
 
     """
 
-    thread: bool = False
-    """
-    Specifies whether the current script is running in a threaded context.
-    """
+    def log(self, level, *args):
+        msg = ' '.join([str(msg) for msg in args])
+        _mpv.handle_log([level, f"({client_name}) {msg}"])
+
+    def info(self, *args):
+        self.log("info", *args)
+
+    def debug(self, *args):
+        self.log("debug", *args)
+
+    def warn(self, *args):
+        self.log("warn", *args)
+
+    def error(self, *a):
+        self.log("error", *a)
+
+    def fatal(self, *a):
+        self.log("fatal", *a)
+
+    def read_script(self, filename):
+        with Path(filename).open("r") as f:
+            return f.read()
 
     def extension_ok(self) -> bool:
-        return mpv.extension_ok()
+        return _mpv.extension_ok()
 
-mpv.mpv = Mpv()
-logging.debug(f"okay from extension: {mpv.extension_ok()}")
+    def process_event(self, event_id: int):
+        self.debug(f"received event: {event_id}")
+
+
+mpv = Mpv()
+mpv.info(f"okay from extension {client_name}: {mpv.extension_ok()}")
