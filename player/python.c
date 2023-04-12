@@ -498,6 +498,7 @@ initialize_python(PyScriptCtx *ctx)
 
     Py_Initialize();
 
+    // Fails with CANARY override. TODO: update CANARY for python?
     // ctx->stats = stats_ctx_create(ctx, ctx->mpctx->global, "script/python");
     // stats_register_thread_cputime(ctx->stats, "cpu");
 
