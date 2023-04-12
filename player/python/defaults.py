@@ -71,11 +71,11 @@ class Mpv:
         self.log("fatal", *a)
 
     def read_script(self, filename):
-        file_path = Path(filename)
+        file_path = Path(filename).resolve()
         if file_path.is_dir():
             file_path = file_path / "main.py"
         with file_path.open("r") as f:
-            return f.read()
+            return str(file_path), f.read()
 
     def extension_ok(self) -> bool:
         return _mpv.extension_ok()

@@ -30,13 +30,12 @@ class MainLoop(object):
         mpvmainloop.handle_log(['warn', ' '.join([str(msg) for msg in args])])
 
     def error(self, *a):
-        mpvmainloop.handle_log(['error', ' '.join([str(msg) for msg in args])])
+        mpvmainloop.handle_log(['error', ' '.join([str(msg) for msg in a])])
 
     def fatal(self, *a):
-        mpvmainloop.handle_log(['fatal', ' '.join([str(msg) for msg in args])])
+        mpvmainloop.handle_log(['fatal', ' '.join([str(msg) for msg in a])])
 
-
-    clients: list[str] = []
+    clients = []
 
     def __init__(self, clients):
         self.clients = clients
@@ -56,18 +55,21 @@ class MainLoop(object):
         if event_id == self.MPV_EVENT_SHUTDOWN:
             self.info("shutting down python")
             return True
+        elif event_id == self.MPV_EVENT_NONE:
+            return False
         else:
             mpvmainloop.notify_client(event_id)
         return False
 
     def wait_events(self):
         while True:
-            event_id = mpvmainloop.wait_event(100)
+            event_id = mpvmainloop.wait_event(100000000)
             if self.handle_event(event_id):
                 break
 
     def run(self):
         ml.debug("running main loop")
         self.wait_events()
+
 
 ml = MainLoop(mpvmainloop.clients)
