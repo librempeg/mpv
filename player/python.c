@@ -292,11 +292,42 @@ mainloop_log_handle(PyObject *mpvmainloop, PyObject *args)
     return script_log(log, args);
 }
 
+static PyMpvObject *
+get_client_context(PyObject *module)
+{
+    PyMpvObject *cctx = (PyMpvObject *)PyObject_GetAttrString(module, "context");
+    return cctx;
+}
+
+static PyObject *
+commandv(PyObject *mpv, PyObject *args)
+{
+    // Does not have node support yet
+    Py_ssize_t arg_length = PyTuple_Size(args);
+    const char **argv = talloc_array(NULL, const char *, arg_length + 1);
+    for (Py_ssize_t i = 0; i < arg_length; i++) {
+        // There could be better way to do this
+        PyObject *arg = PyTuple_GetItem(args, i);
+        char *carg;
+        PyArg_Parse(arg, "s", &carg);
+        Py_DECREF(arg);
+        argv[i] = carg;
+    }
+    argv[arg_length] = NULL;
+    PyMpvObject *ctx = get_client_context(mpv);
+    int ret = mpv_command(ctx->client, argv);
+    talloc_free(argv);
+    Py_DECREF(ctx);
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef Mpv_methods[] = {
     {"extension_ok", (PyCFunction)mpv_extension_ok, METH_VARARGS,             /* METH_VARARGS | METH_KEYWORDS (PyObject *self, PyObject *args, PyObject **kwargs) */
      PyDoc_STR("Just a test method to see if extending is working.")},
     {"handle_log", (PyCFunction)handle_log, METH_VARARGS,
      PyDoc_STR("handles log records emitted from python thread.")},
+    {"commandv", (PyCFunction)commandv, METH_VARARGS,
+     PyDoc_STR("runs mpv_command.")},
     {NULL, NULL, 0, NULL}                                                     /* Sentinal */
 };
 

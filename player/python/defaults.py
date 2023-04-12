@@ -6,7 +6,41 @@ The python wrapper module for the embedded and extended functionalities
 import mpv as _mpv
 from pathlib import Path
 
+# __all__ = ['client_name', 'mpv']
+
 client_name = Path(_mpv.filename).stem
+
+class Registry:
+    script_message = {}
+    binds = {}
+
+    def flush_key_bindings(self):
+        forced = []
+        reg = []
+        for name, value in binds.items():
+            if value.get("input"):
+                if value.get("forced"):
+                    forced.append(value)
+                else:
+                    reg.append(value)
+        reg = sorted([v['input'] for v in reg])
+        forced = sorted([v['input'] for v in forced])
+
+        section_name = "input_" + client_name
+
+        self.commandv("define-section", section_name, "\n".join(reg), "default")
+        self.commandv("enable-section", section_name, "allow-hide-cursor+allow-vo-dragging")
+
+        section_name = "input_forced_" + client_name
+
+        self.commandv("define-section", section_name, "\n".join(forced), "forced")
+        self.commandv("enable-section", section_name, "allow-hide-cursor+allow-vo-dragging")
+
+    def commandv(self, *args):
+        _mpv.commandv(*args)
+
+
+registry = Registry()
 
 
 class Mpv:
@@ -48,6 +82,36 @@ class Mpv:
 
     def process_event(self, event_id):
         self.debug(f"received event: {event_id}")
+
+    next_bid = 1
+
+    def add_binding(self, key=None, name=None, forced=False, **opts):
+        """
+        Args:
+            opts: boolean memebers (repeatable, complex)
+        """
+        # copied from defaults.js (not sure what e and emit is yet)
+        key_data = opts
+        self.next_bid += 1
+        key_data.update(forced=forced, id=self.next_bid)
+        if name is None:
+            name = f"__keybinding{self.next_bid}"  # unique name
+
+        def decorate(fn):
+            registry.script_message[name] = fn
+
+            def key_cb(state):
+                e = state[0]
+                emit = state[1] == "m" if e == "u" else e == "d"
+                if (emit or e == "p" or e == "r") and key_data.get("repeatable", False):
+                    fn()
+            key_data['cb'] = key_cb
+
+        if key is not None:
+            key_data["input"] = key + " script-binding " + client_name + "/" + name
+        registry.binds[name] = key_data
+
+        return decorate
 
 
 mpv = Mpv()
