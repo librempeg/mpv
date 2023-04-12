@@ -467,7 +467,13 @@ load_script(PyObject *filename, PyObject *defaults, char *client_name)
     Py_DECREF(pystring);
 
     PyObject *client = Py_CompileString(string, client_name, Py_file_input);
+    if (client == NULL) {
+        return NULL;
+    }
     PyObject *client_mod = PyImport_ExecCodeModule(client_name, client);
+    if (client_mod == NULL) {
+        return NULL;
+    }
     Py_DECREF(client);
     return client_mod;
 }
@@ -477,12 +483,12 @@ static int
 initialize_python(PyScriptCtx *ctx)
 {
     if (PyImport_AppendInittab("mpv", PyInit_mpv) == -1) {
-        mp_msg(ctx->log, mp_msg_find_level("error"), "Error: could not extend in-built modules table\n");
+        mp_msg(ctx->log, mp_msg_find_level("error"), "could not extend in-built modules table\n");
         return -1;
     }
 
     if (PyImport_AppendInittab("mpvmainloop", PyInit_mpvmainloop) == -1) {
-        mp_msg(ctx->log, mp_msg_find_level("error"), "Error: could not extend in-built modules table\n");
+        mp_msg(ctx->log, mp_msg_find_level("error"), "could not extend in-built modules table\n");
         return -1;
     }
 
@@ -495,13 +501,17 @@ initialize_python(PyScriptCtx *ctx)
     // ctx->stats = stats_ctx_create(ctx, ctx->mpctx->global, "script/python");
     // stats_register_thread_cputime(ctx->stats, "cpu");
 
+    size_t discarded_client = 0;
+
     for (size_t i = 0; i < ctx->script_count; i++) {
         PyThreadState *threadState = Py_NewInterpreter();
         mainThread = PyEval_SaveThread();
         PyEval_RestoreThread(threadState);
         if (mainThread == NULL) {
-            mp_msg(ctx->log, mp_msg_find_level("error"), "Error: %s.\n", "Could not switch thread");
-            return -1;
+            discarded_client++;
+            mp_msg(ctx->log, mp_msg_find_level("error"), "could not switch thread.\n");
+            PyEval_RestoreThread(mainThread);
+            continue;
         }
 
         PyObject *filename = PyUnicode_DecodeFSDefault(ctx->scripts[i]);
@@ -514,9 +524,11 @@ initialize_python(PyScriptCtx *ctx)
 
         PyObject *pympv = PyImport_ImportModule("mpv");
         if (PyModule_AddObjectRef(pympv, "context", (PyObject *)pyMpv) < 0) {
-            mp_msg(ctx->log, mp_msg_find_level("error"), "Error: %s.\n", "cound not set up context for the module mpv");
-            Py_EndInterpreter(threadState);
-            return -1;
+            discarded_client++;
+            mp_msg(ctx->log, mp_msg_find_level("error"), "cound not set up context for the module mpv.\n");
+            threadState = PyEval_SaveThread();
+            PyEval_RestoreThread(mainThread);
+            continue;
         };
 
         PyModule_AddObjectRef(pympv, "filename", filename);
@@ -524,9 +536,11 @@ initialize_python(PyScriptCtx *ctx)
         PyObject *defaults = load_local_pystrings(builtin_files[0][1], "mpvclient");
 
         if (defaults == NULL) {
-            mp_msg(ctx->log, mp_msg_find_level("error"), "Error: %s.\n", "failed to load defaults module");
-            Py_EndInterpreter(threadState);
-            return -1;
+            discarded_client++;
+            mp_msg(ctx->log, mp_msg_find_level("error"), "failed to load defaults (AKA. mpvclient) module.\n");
+            threadState = PyEval_SaveThread();
+            PyEval_RestoreThread(mainThread);
+            continue;
         }
 
         PyObject *client_name = PyObject_GetAttrString(defaults, "client_name");
@@ -537,29 +551,61 @@ initialize_python(PyScriptCtx *ctx)
         Py_DECREF(os);
         Py_DECREF(path);
         if (PyObject_CallOneArg(exists, filename) == Py_False) {
-            mp_msg(ctx->log, mp_msg_find_level("error"), "Error: %s does not exists.\n", ctx->scripts[i]);
+            discarded_client++;
+            mp_msg(ctx->log, mp_msg_find_level("error"), "%s does not exists.\n", ctx->scripts[i]);
             Py_DECREF(exists);
-            Py_EndInterpreter(threadState);
-            return -1;
+            threadState = PyEval_SaveThread();
+            PyEval_RestoreThread(mainThread);
+            continue;
         }
         Py_DECREF(exists);
 
         char *cname;
         PyArg_Parse(client_name, "s", &cname);
         PyObject *client = load_script(filename, defaults, cname);
+        if (client == NULL) {
+            discarded_client++;
+            mp_msg(ctx->log, mp_msg_find_level("error"), "could not load client. discarding: %s.\n", cname);
+            threadState = PyEval_SaveThread();
+            PyEval_RestoreThread(mainThread);
+            continue;
+        }
+
+        PyObject *cmpv = PyObject_GetAttrString(client, "mpv");
+        if (cmpv == NULL) {
+            discarded_client++;
+            mp_msg(ctx->log, mp_msg_find_level("error"), "illegal client. does not have an 'mpv' instance (use: from mpvclient import mpv). discarding: %s.\n", cname);
+            threadState = PyEval_SaveThread();
+            PyEval_RestoreThread(mainThread);
+            continue;
+        }
+
+        Py_DECREF(cmpv);
 
         pyMpv->pyclient = client;
 
-        clients[i] = pyMpv;
-        threads[i] = PyEval_SaveThread();
-        client_names[i] = cname;
+        threads[i - discarded_client] = PyEval_SaveThread();;
+        clients[i - discarded_client] = pyMpv;
+        client_names[i - discarded_client] = cname;
         PyEval_RestoreThread(mainThread);
     }
     talloc_free(ctx->scripts);
 
+    if (discarded_client > 0) {
+        ctx->script_count = ctx->script_count - discarded_client;
+        for (size_t i = 0; i < ctx->script_count; i++) {
+            clients[i]->script_count = clients[i]->script_count - discarded_client;
+        }
+    }
+    if (ctx->script_count == 0) {
+        PYcINITIALIZED = true;
+        mp_msg(ctx->log, mp_msg_find_level("warn"), "no active client found.");
+        return -1;
+    }
+
     PyObject *mpvmainloop = PyImport_ImportModule("mpvmainloop");
     if (PyModule_AddObjectRef(mpvmainloop, "context", (PyObject *)ctx) < 0) {
-        mp_msg(ctx->log, mp_msg_find_level("error"), "Error: %s.\n", "cound not set up context for the module mpvmainloop");
+        mp_msg(ctx->log, mp_msg_find_level("error"), "%s.\n", "cound not set up context for the module mpvmainloop");
         return -1;
     };
 
@@ -577,6 +623,9 @@ initialize_python(PyScriptCtx *ctx)
     PyObject *mainloop = load_local_pystrings(builtin_files[1][1], "mainloop");
     PyObject *ml = PyObject_GetAttrString(mainloop, "ml");
     PyObject *run_s = PyUnicode_FromString("run");
+
+    PYcINITIALIZED = true;
+
     PyObject_CallMethodNoArgs(ml, run_s);
     Py_DECREF(run_s);
     Py_DECREF(ml);

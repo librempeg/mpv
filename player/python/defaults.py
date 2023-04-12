@@ -37,13 +37,16 @@ class Mpv:
         self.log("fatal", *a)
 
     def read_script(self, filename):
-        with Path(filename).open("r") as f:
+        file_path = Path(filename)
+        if file_path.is_dir():
+            file_path = file_path / "main.py"
+        with file_path.open("r") as f:
             return f.read()
 
     def extension_ok(self) -> bool:
         return _mpv.extension_ok()
 
-    def process_event(self, event_id: int):
+    def process_event(self, event_id):
         self.debug(f"received event: {event_id}")
 
 

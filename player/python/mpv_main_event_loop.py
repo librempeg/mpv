@@ -39,15 +39,14 @@ class MainLoop(object):
     clients: list[str] = []
 
     def __init__(self, clients):
-        if clients is not None:
-            self.clients = clients
+        self.clients = clients
 
     def get_client_index(self, client_name):
         if client_name not in self.clients:
             raise Exception
         return self.clients.index(client_name)
 
-    def handle_event(self, event_id: int) -> bool:
+    def handle_event(self, event_id):
         """
         Returns:
             boolean specifing whether some event loop breaking

@@ -273,6 +273,8 @@ void mp_load_builtin_scripts(struct MPContext *mpctx)
 
 #if HAVE_PYTHON
 
+bool PYcINITIALIZED = false;
+
 static int64_t mp_load_python_scripts(struct MPContext *mpctx, char **py_scripts, size_t script_count)
 {
     char *ext = "py";
@@ -315,6 +317,12 @@ static int64_t mp_load_python_scripts(struct MPContext *mpctx, char **py_scripts
     // thread detaches itself and never returns
     pthread_create(&thread, NULL, script_thread, arg);
 
+    while (!PYcINITIALIZED) {
+        // spin, wait for python to initialize
+        // TODO: how to make this better?
+        sleep(1);
+    }
+
     return id;
 }
 #endif
@@ -330,15 +338,29 @@ bool mp_load_scripts(struct MPContext *mpctx)
 
     bool put_in_py_scripts(char *file)
     {
-        char *ext = mp_splitext(file, NULL);
-        if (ext && strcasecmp(ext, "py") == 0) {
+        void push_to_array(char *f) {
             if (py_scripts_array_size == py_file_count) {
                 py_scripts_array_size = py_file_count * 2;
                 py_scripts = talloc_realloc(NULL, py_scripts, char *, py_scripts_array_size);
             }
-            py_scripts[py_file_count] = talloc_strdup(NULL, file);
+            py_scripts[py_file_count] = talloc_strdup(NULL, f);
             py_file_count++;
+        }
+        char *ext = mp_splitext(file, NULL);
+        if (ext && strcasecmp(ext, "py") == 0) {
+            push_to_array(file);
             return true;
+        }
+        if (!ext) {
+            // check if it's a directory
+            struct stat s;
+            if (!stat(file, &s) && S_ISDIR(s.st_mode)) {
+                char *filepath = mp_path_join(NULL, file, "main.py");
+                if (!stat(filepath, &s) && S_ISREG(s.st_mode)) {
+                    push_to_array(file);
+                    return true;
+                }
+            }
         }
         return false;
     }

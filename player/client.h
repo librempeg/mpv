@@ -14,6 +14,10 @@ struct mp_client_api;
 struct mp_log;
 struct mpv_global;
 
+#if HAVE_PYTHON
+extern bool PYcINITIALIZED;
+#endif
+
 // Includes space for \0
 #define MAX_CLIENT_NAME 64
 
