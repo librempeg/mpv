@@ -510,7 +510,7 @@ initialize_python(PyScriptCtx *ctx)
     }
 
     char **client_names = talloc_array(NULL, char *, ctx->script_count);
-    clients = talloc_array(NULL, PyMpvObject *, ctx->script_count);
+    clients = talloc_array(NULL, PyMpvObject *, ctx->script_count + 1);
 
     Py_Initialize();
 
@@ -518,21 +518,29 @@ initialize_python(PyScriptCtx *ctx)
     // ctx->stats = stats_ctx_create(ctx, ctx->mpctx->global, "script/python");
     // stats_register_thread_cputime(ctx->stats, "cpu");
 
-    size_t discarded_client = 0;
-
-    for (size_t i = 0; i < ctx->script_count; i++) {
-        PyThreadState *threadState = Py_NewInterpreter();
-        // The following two methods are IO blocking, do not use them after initialization use PyThreadState_Swap instead.
-        mainThread = PyEval_SaveThread();
-        PyEval_RestoreThread(threadState);
-
-        PyObject *filename = PyUnicode_DecodeFSDefault(ctx->scripts[i]);
-
+    // Keep an extra dummy interpreter to repopulate the the global interpreter
+    // in case we through away the last interpreter which seem to erase some
+    // essential stuff from the main thread
+    for (size_t i = 0; i <= ctx->script_count; i++) {
         PyMpvObject *pyMpv = PyObject_New(PyMpvObject, &PyMpv_Type);
         pyMpv->log = ctx->log;
         pyMpv->client = ctx->client;
         pyMpv->mpctx = ctx->mpctx;
-        pyMpv->script_count = ctx->script_count;
+        pyMpv->threadState = Py_NewInterpreter();
+        clients[i] = pyMpv;
+    }
+
+    size_t discarded_client = 0;
+
+    PyMpvObject *pyMpv;
+    mainThread = PyThreadState_Swap(NULL);
+
+    for (size_t i = 0; i < ctx->script_count; i++) {
+        pyMpv = clients[i];
+        PyThreadState_Swap(pyMpv->threadState);
+        clients[i] = NULL;
+
+        PyObject *filename = PyUnicode_DecodeFSDefault(ctx->scripts[i]);
 
         PyObject *pympv = PyImport_ImportModule("mpv");
         if (PyModule_AddObjectRef(pympv, "context", (PyObject *)pyMpv) < 0) {
@@ -540,15 +548,9 @@ initialize_python(PyScriptCtx *ctx)
             mp_msg(ctx->log, mp_msg_find_level("error"), "cound not set up context for the module mpv.\n");
             Py_DECREF(filename);
             Py_DECREF(pympv);
+            Py_EndInterpreter(pyMpv->threadState);
             PyObject_Del(pyMpv);
-
-            // closing the interpreter make it unstable; let it get closed by Py_Finalize
-            // or there could be some better way to get it done.
-            // Py_EndInterpreter(threadState); // still hold the GIL; use Swap
-            // PyThreadState_Swap(mainThread);
-
-            PyEval_SaveThread();
-            restore_thread(mainThread);
+            PyThreadState_Swap(NULL);
             continue;
         };
 
@@ -562,9 +564,9 @@ initialize_python(PyScriptCtx *ctx)
             Py_DECREF(filename);
             Py_DECREF(pympv);
             Py_DECREF(defaults);
+            Py_EndInterpreter(pyMpv->threadState);
             PyObject_Del(pyMpv);
-            PyEval_SaveThread();
-            restore_thread(mainThread);
+            PyThreadState_Swap(NULL);
             continue;
         }
 
@@ -583,9 +585,9 @@ initialize_python(PyScriptCtx *ctx)
             Py_DECREF(pympv);
             Py_DECREF(defaults);
             Py_DECREF(client_name);
+            Py_EndInterpreter(pyMpv->threadState);
             PyObject_Del(pyMpv);
-            PyEval_SaveThread();
-            restore_thread(mainThread);
+            PyThreadState_Swap(NULL);
             continue;
         }
         Py_DECREF(exists);
@@ -600,9 +602,9 @@ initialize_python(PyScriptCtx *ctx)
             Py_DECREF(filename);
             Py_DECREF(pympv);
             Py_DECREF(defaults);
+            Py_EndInterpreter(pyMpv->threadState);
             PyObject_Del(pyMpv);
-            PyEval_SaveThread();
-            restore_thread(mainThread);
+            PyThreadState_Swap(NULL);
             continue;
         }
 
@@ -614,9 +616,9 @@ initialize_python(PyScriptCtx *ctx)
             Py_DECREF(pympv);
             Py_DECREF(defaults);
             Py_DECREF(client);
+            Py_EndInterpreter(pyMpv->threadState);
             PyObject_Del(pyMpv);
-            PyEval_SaveThread();
-            restore_thread(mainThread);
+            PyThreadState_Swap(NULL);
             continue;
         }
 
@@ -627,25 +629,33 @@ initialize_python(PyScriptCtx *ctx)
         Py_DECREF(defaults);
         Py_DECREF(client);
 
-        Py_DECREF(threadState);
-
-        pyMpv->threadState = PyEval_SaveThread(); // releases GIL; blocks IO as well
         clients[i - discarded_client] = pyMpv;
+        clients[i - discarded_client]->threadState = PyThreadState_Swap(NULL);
         client_names[i - discarded_client] = cname;
-        restore_thread(mainThread);
     }
     talloc_free(ctx->scripts);
 
+    // Swap with the clean thread to repopulate the global interpreter in case
+    // the last sub interpreter was deleted
+    pyMpv = clients[ctx->script_count];
+    PyThreadState_Swap(pyMpv->threadState);
+    PyObject_Del(pyMpv);
+    PyThreadState_Swap(NULL);
+    clients[ctx->script_count] = NULL;
+
+    if (ctx->script_count == discarded_client) {
+        mp_msg(ctx->log, mp_msg_find_level("warn"), "no active client found.");
+        PYcINITIALIZED = true;
+        talloc_free(clients);
+        talloc_free(client_names);
+        return -1;
+    }
+
+    PyThreadState_Swap(mainThread);
+
     if (discarded_client > 0) {
         ctx->script_count = ctx->script_count - discarded_client;
-        for (size_t i = 0; i < ctx->script_count; i++) {
-            clients[i]->script_count = clients[i]->script_count - discarded_client;
-        }
-    }
-    if (ctx->script_count == 0) {
-        PYcINITIALIZED = true;
-        mp_msg(ctx->log, mp_msg_find_level("warn"), "no active client found.");
-        return -1;
+        clients = talloc_realloc(NULL, clients, PyThreadState *, ctx->script_count);
     }
 
     PyObject *mpvmainloop = PyImport_ImportModule("mpvmainloop");
@@ -663,7 +673,6 @@ initialize_python(PyScriptCtx *ctx)
     }
 
     talloc_free(client_names);
-
 
     PyModule_AddObjectRef(mpvmainloop, "clients", clnts);
     Py_XDECREF(clnts);
