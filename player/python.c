@@ -326,6 +326,76 @@ commandv(PyObject *mpv, PyObject *args)
     Py_RETURN_NONE;
 }
 
+// args: string -> string
+static PyObject* find_config_file(PyObject* mpv, PyObject* args)
+{
+    PyMpvObject *ctx = get_client_context(mpv);
+
+    const char *fname;
+
+    if (!PyArg_ParseTuple(args, "s", &fname))
+        return NULL;
+
+    char *path = mp_find_config_file(ctx->ta_ctx, ctx->mpctx->global, fname);
+    if (path) {
+        PyObject* ret =  PyUnicode_FromString(path);
+        talloc_free(path);
+        return ret;
+    } else {
+        talloc_free(path);
+        PyErr_SetString(PyExc_FileNotFoundError, "Not found");
+        return NULL;
+    }
+
+    Py_RETURN_NONE;
+}
+
+// args: string, bool
+static PyObject* request_event(PyObject* mpv, PyObject* args)
+{
+    PyMpvObject *ctx = get_client_context(mpv);
+
+    const char *event;
+    bool enable;
+
+    if (!PyArg_ParseTuple(args, "sp", &event, &enable))
+        return NULL;
+
+    for (int n = 0; n < 256; n++) {
+        // some n's may be missing ("holes"), returning NULL
+        const char *name = mpv_event_name(n);
+        if (name && strcmp(name, event) == 0) {
+            if (mpv_request_event(ctx->client, n, enable) >= 0) {
+                Py_RETURN_TRUE;
+            } else {
+                Py_RETURN_FALSE;
+            }
+            return NULL;
+        }
+    }
+    Py_RETURN_NONE;
+}
+
+// args: string
+static PyObject* enable_messages(PyObject* mpv, PyObject* args)
+{
+    PyMpvObject *ctx = get_client_context(mpv);
+
+    const char *level;
+
+    if (!PyArg_ParseTuple(args, "s", &level))
+        return NULL;
+
+
+    int res = mpv_request_log_messages(ctx->client, level);
+    if (res == MPV_ERROR_INVALID_PARAMETER) {
+        PyErr_SetString(PyExc_Exception, "Invalid Log Error");
+        return NULL;
+    }
+    return check_error(res);
+}
+
+
 // args: name, native value
 static PyObject* set_property_native(PyObject* mpv, PyObject* args)
 {
@@ -346,6 +416,12 @@ static PyMethodDef Mpv_methods[] = {
      PyDoc_STR("Just a test method to see if extending is working.")},
     {"handle_log", (PyCFunction)handle_log, METH_VARARGS,
      PyDoc_STR("handles log records emitted from python thread.")},
+    {"find_config_file", (PyCFunction)find_config_file, METH_VARARGS,
+     PyDoc_STR("")},
+    {"request_event", (PyCFunction)request_event, METH_VARARGS,
+     PyDoc_STR("")},
+    {"enable_messages", (PyCFunction)enable_messages, METH_VARARGS,
+     PyDoc_STR("")},
     {"commandv", (PyCFunction)commandv, METH_VARARGS,
      PyDoc_STR("runs mpv_command.")},
     {NULL, NULL, 0, NULL}                                                     /* Sentinal */
@@ -804,76 +880,43 @@ static void makenode(void *ta_ctx, PyObject *obj, struct mpv_node *node) {
 }
 
 
-// args: string -> string
-static PyObject* script_find_config_file(PyObject* self, PyObject* args)
+static PyObject *
+deconstructnode(struct mpv_node *node)
 {
-    PyScriptCtx *ctx= (PyScriptCtx *)self;
-
-    const char *fname;
-
-    if (!PyArg_ParseTuple(args, "s", &fname))
-        return NULL;
-
-    char *path = mp_find_config_file(NULL, ctx->mpctx->global, fname);
-    if (path) {
-        PyObject* ret =  PyUnicode_FromString(path);
-        talloc_free(path);
-        return ret;
-    } else {
-        talloc_free(path);
-        PyErr_SetString(PyExc_FileNotFoundError, "Not found");
-        return NULL;
+    if (node->format == MPV_FORMAT_NONE) {
+        Py_RETURN_NONE;
     }
-
-    Py_RETURN_NONE;
-}
-
-// args: string,bool
-static PyObject* script_request_event(PyObject* self, PyObject* args)
-{
-    PyScriptCtx *ctx= (PyScriptCtx *)self;
-
-    const char *event;
-    bool enable;
-
-    if (!PyArg_ParseTuple(args, "sp", &event, &enable))
-        return NULL;
-
-    for (int n = 0; n < 256; n++) {
-        // some n's may be missing ("holes"), returning NULL
-        const char *name = mpv_event_name(n);
-        if (name && strcmp(name, event) == 0) {
-            if (mpv_request_event(ctx->client, n, enable) >= 0) {
-                Py_RETURN_TRUE;
-            } else {
-                Py_RETURN_FALSE;
-            }
-            return NULL;
+    else if (node->format == MPV_FORMAT_FLAG) {
+        if (node->u.flag == 1) {
+            Py_RETURN_TRUE;
         }
+        Py_RETURN_FALSE;
     }
-
-    Py_RETURN_NONE;
+    else if (node->format == MPV_FORMAT_INT64) {
+        return PyLong_FromLongLong(node->u.int64);
+    }
+    else if (node->format == MPV_FORMAT_DOUBLE) {
+        return PyFloat_FromDouble(node->u.double_);
+    }
+    else if (node->format == MPV_FORMAT_STRING) {
+        return PyUnicode_FromString(node->u.string);
+    }
+    else if (node->format == MPV_FORMAT_NODE_ARRAY) {
+        PyObject *lnode = PyList_New(node->u.list->num);
+        for (int i = 0; i < node->u.list->num; i++) {
+            PyList_SetItem(lnode, i, deconstructnode(&node->u.list->values[i]));
+        }
+        return lnode;
+    }
+    else if (node->format == MPV_FORMAT_NODE_MAP) {
+        PyObject *dnode = PyDict_New();
+        for (int i = 0; i < node->u.list->num; i++) {
+            PyDict_SetItemString(dnode, node->u.list->keys[i], deconstructnode(&node->u.list->values[i]));
+        }
+        return dnode;
+    }
 }
 
-
-// args: string
-static PyObject* script_enable_messagess(PyObject* self, PyObject* args)
-{
-    PyScriptCtx *ctx= (PyScriptCtx *)self;
-
-    const char *level;
-
-    if (!PyArg_ParseTuple(args, "s", &level))
-        return NULL;
-
-
-    int res = mpv_request_log_messages(ctx->client, level);
-    if (res == MPV_ERROR_INVALID_PARAMETER) {
-        PyErr_SetString(PyExc_Exception, "Invalid Log Error");
-        return NULL;
-    }
-    return check_error(res);
-}
 
 // args: string
 static PyObject* script_command(PyObject* self, PyObject* args)
@@ -958,24 +1001,6 @@ static PyObject* script_del_property(PyObject* self, PyObject* args)
 
     int res = mpv_del_property(ctx->client, p);
     return check_error(res);
-}
-
-static PyObject* script_enable_messages(PyObject* self, PyObject* args)
-{
-    PyScriptCtx *ctx= (PyScriptCtx *)self;
-
-    const char *level;
-
-    if (!PyArg_ParseTuple(args, "s", &level))
-        return NULL;
-
-
-    int r = mpv_request_log_messages(ctx->client, level);
-    if (r == MPV_ERROR_INVALID_PARAMETER) {
-        PyErr_SetString(PyExc_Exception, "Invalid log level");
-        Py_RETURN_NONE;
-    }
-    return check_error(r);
 }
 
 // args: string,bool
