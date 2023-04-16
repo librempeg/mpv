@@ -93,6 +93,10 @@ static PyTypeObject PyScriptCtx_Type = {
 };
 
 
+// prototypes
+static void makenode(void *ta_ctx, PyObject *obj, struct mpv_node *node);
+static PyObject *check_error(int res);
+
 /*
 * Separation of concern
 * =====================
@@ -111,13 +115,6 @@ PyThreadState *mainThread;
 PyObject *PyInit_mpv(void);
 PyObject *PyInit_mpvmainloop(void);
 
-static void
-restore_thread(PyThreadState *threadState)
-{
-    PyEval_RestoreThread(threadState);
-    Py_DECREF(threadState);
-}
-
 static PyObject *MpvError;
 
 typedef struct {
@@ -128,6 +125,7 @@ typedef struct {
     struct MPContext    *mpctx;
     struct mp_log       *log;
     struct stats_ctx    *stats;
+    void                *ta_ctx;
     PyObject            *pympv_attr;
     PyObject            *pyclient;
     PyThreadState       *threadState;
@@ -328,6 +326,21 @@ commandv(PyObject *mpv, PyObject *args)
     Py_RETURN_NONE;
 }
 
+// args: name, native value
+static PyObject* set_property_native(PyObject* mpv, PyObject* args)
+{
+    PyMpvObject *ctx = get_client_context(mpv);
+    mpv_node node;
+
+    char *name;
+    PyObject *property_name = PyTuple_GetItem(args, 0);
+    PyArg_Parse(property_name, "s", &name);
+
+    makenode(ctx->ta_ctx, PyTuple_GetItem(args, 1), &node);
+    int res = mpv_set_property(ctx->client, name, MPV_FORMAT_NODE, &node);
+    return check_error(res);
+}
+
 static PyMethodDef Mpv_methods[] = {
     {"extension_ok", (PyCFunction)mpv_extension_ok, METH_VARARGS,             /* METH_VARARGS | METH_KEYWORDS (PyObject *self, PyObject *args, PyObject **kwargs) */
      PyDoc_STR("Just a test method to see if extending is working.")},
@@ -526,6 +539,7 @@ initialize_python(PyScriptCtx *ctx)
         pyMpv->log = ctx->log;
         pyMpv->client = ctx->client;
         pyMpv->mpctx = ctx->mpctx;
+        pyMpv->ta_ctx = talloc_new(NULL);
         pyMpv->threadState = Py_NewInterpreter();
         clients[i] = pyMpv;
     }
@@ -549,6 +563,7 @@ initialize_python(PyScriptCtx *ctx)
             Py_DECREF(filename);
             Py_DECREF(pympv);
             Py_EndInterpreter(pyMpv->threadState);
+            talloc_free(pyMpv->ta_ctx);
             PyObject_Del(pyMpv);
             PyThreadState_Swap(NULL);
             continue;
@@ -565,6 +580,7 @@ initialize_python(PyScriptCtx *ctx)
             Py_DECREF(pympv);
             Py_DECREF(defaults);
             Py_EndInterpreter(pyMpv->threadState);
+            talloc_free(pyMpv->ta_ctx);
             PyObject_Del(pyMpv);
             PyThreadState_Swap(NULL);
             continue;
@@ -586,6 +602,7 @@ initialize_python(PyScriptCtx *ctx)
             Py_DECREF(defaults);
             Py_DECREF(client_name);
             Py_EndInterpreter(pyMpv->threadState);
+            talloc_free(pyMpv->ta_ctx);
             PyObject_Del(pyMpv);
             PyThreadState_Swap(NULL);
             continue;
@@ -603,6 +620,7 @@ initialize_python(PyScriptCtx *ctx)
             Py_DECREF(pympv);
             Py_DECREF(defaults);
             Py_EndInterpreter(pyMpv->threadState);
+            talloc_free(pyMpv->ta_ctx);
             PyObject_Del(pyMpv);
             PyThreadState_Swap(NULL);
             continue;
@@ -617,6 +635,7 @@ initialize_python(PyScriptCtx *ctx)
             Py_DECREF(defaults);
             Py_DECREF(client);
             Py_EndInterpreter(pyMpv->threadState);
+            talloc_free(pyMpv->ta_ctx);
             PyObject_Del(pyMpv);
             PyThreadState_Swap(NULL);
             continue;
@@ -655,7 +674,7 @@ initialize_python(PyScriptCtx *ctx)
 
     if (discarded_client > 0) {
         ctx->script_count = ctx->script_count - discarded_client;
-        clients = talloc_realloc(NULL, clients, PyThreadState *, ctx->script_count);
+        clients = talloc_realloc(NULL, clients, PyMpvObject *, ctx->script_count);
     }
 
     PyObject *mpvmainloop = PyImport_ImportModule("mpvmainloop");
@@ -689,8 +708,6 @@ initialize_python(PyScriptCtx *ctx)
     Py_DECREF(mainloop);
     Py_DECREF(mpvmainloop);
 
-    talloc_free(clients);
-
     return 0;
 }
 
@@ -708,6 +725,12 @@ static int s_load_python(struct mp_script_args *args)
         return -1;
     };
 
+    for (size_t i = 0; i < ctx->script_count; i++) {
+        talloc_free(clients[i]->ta_ctx);
+    }
+
+    talloc_free(clients);
+
     Py_Finalize(); // closes the sub interpreters, no need for doing it manually
     return 0;
 }
@@ -718,7 +741,7 @@ static int s_load_python(struct mp_script_args *args)
  *  Main mp.* scripting APIs and helpers
  *********************************************************************/
 
- static PyObject* check_error(PyObject* self, int err)
+ static PyObject* check_error(int err)
 {
     if (err >= 0) {
         Py_RETURN_TRUE;
@@ -727,88 +750,59 @@ static int s_load_python(struct mp_script_args *args)
     Py_RETURN_NONE;
 }
 
-// static void makenode(PyObject *obj, struct mpv_node *node) {
-//     if (obj == Py_None) {
-//         node->format = MPV_FORMAT_NONE;
-//         return;
-//     }
-//
-//     if (PyBool_Check(obj)) {
-//         node->format = MPV_FORMAT_FLAG;
-//         node->u.flag = (int) PyObject_IsTrue(obj);
-//         return;
-//     }
-//
-//     if (PyLong_Check(obj)) {
-//         node->format = MPV_FORMAT_INT64;
-//         node->u.int64 = PyLong_AsLongLong(obj);
-//         return;
-//     }
-//
-//     if (PyFloat_Check(obj)) {
-//         node->format = MPV_FORMAT_DOUBLE;
-//         node->u.double_ = PyFloat_AsDouble(obj);
-//         return;
-//     }
-//
-//     if (PyUnicode_Check(obj)) {
-//         node->format = MPV_FORMAT_STRING;
-//         node->u.string = (char*) PyUnicode_AsUTF8(obj);
-//         return;
-//     }
-//
-//     if (PyList_Check(obj)) {
-//         node->format = MPV_FORMAT_NODE_ARRAY;
-//         node->u.list = mpv_node_array_alloc(PyList_Size(obj));
-//         if (!node->u.list) {
-//             PyErr_SetString(PyExc_RuntimeError, "Failed to allocate node array");
-//             return;
-//         }
-//         for (int i = 0; i < PyList_Size(obj); i++) {
-//             PyObject *item = PyList_GetItem(obj, i);
-//             struct mpv_node *child = &node->u.list->values[i];
-//             makenode_pyobj(item, child);
-//         }
-//         return;
-//     }
-//
-//     if (PyDict_Check(obj)) {
-//         node->format = MPV_FORMAT_NODE_MAP;
-//         node->u.list = mpv_node_array_alloc(PyDict_Size(obj));
-//         if (!node->u.list) {
-//             PyErr_SetString(PyExc_RuntimeError, "Failed to allocate node array");
-//             return;
-//         }
-//         Py_ssize_t pos = 0;
-//         PyObject *key, *value;
-//         while (PyDict_Next(obj, &pos, &key, &value)) {
-//             struct mpv_node *child = &node->u.list->values[pos];
-//             makenode_pyobj(key, child);
-//             makenode_pyobj(value, child + 1);
-//             pos++;
-//         }
-//         return;
-//     }
-//
-//     PyErr_Format(PyExc_TypeError, "Unsupported object type: %s", Py_TYPE(obj)->tp_name);
-// }
+static void makenode(void *ta_ctx, PyObject *obj, struct mpv_node *node) {
+    if (obj == Py_None) {
+        node->format = MPV_FORMAT_NONE;
+    }
+    else if (PyBool_Check(obj)) {
+        node->format = MPV_FORMAT_FLAG;
+        node->u.flag = (int) PyObject_IsTrue(obj);
+    }
+    else if (PyLong_Check(obj)) {
+        node->format = MPV_FORMAT_INT64;
+        node->u.int64 = (int64_t) PyLong_AsLongLong(obj);
+    }
+    else if (PyFloat_Check(obj)) {
+        node->format = MPV_FORMAT_DOUBLE;
+        node->u.double_ = PyFloat_AsDouble(obj);
+    }
+    else if (PyUnicode_Check(obj)) {
+        node->format = MPV_FORMAT_STRING;
+        node->u.string = talloc_strdup(ta_ctx, (char *)PyUnicode_AsUTF8(obj));
+    }
+    else if (PyList_Check(obj)) {
+        node->format = MPV_FORMAT_NODE_ARRAY;
+        node->u.list = talloc(ta_ctx, struct mpv_node_list);
+        int l = (int) PyList_Size(obj);
+        node->u.list->num = l;
+        node->u.list->keys = NULL;
+        node->u.list->values = talloc_array(ta_ctx, struct mpv_node, l);
+        for (int i = 0; i < l; i++) {
+            PyObject *child = PyList_GetItem(obj, i);
+            makenode(ta_ctx, child, &node->u.list->values[i]);
+        }
+    }
+    else if (PyDict_Check(obj)) {
+        node->format = MPV_FORMAT_NODE_MAP;
+        node->u.list = talloc(ta_ctx, struct mpv_node_list);
+        int l = (int) PyDict_Size(obj);
+        node->u.list->num = l;
+        node->u.list->keys = talloc_array(ta_ctx, char *, l);
+        node->u.list->values = talloc_array(ta_ctx, struct mpv_node, l);
 
-
-
-// dummy function template
-static PyObject* script_dummy(PyObject* self, PyObject* args)
-{
-    PyScriptCtx *ctx= (PyScriptCtx *)self;
-
-    const char *p;
-
-    if (!PyArg_ParseTuple(args, "s", &p))
-        return NULL;
-
-
-    int res = 0; // do work
-    return check_error(self, res);
+        PyObject *key, *value;
+        Py_ssize_t pos = 0;
+        while (PyDict_Next(obj, &pos, &key, &value)) {
+            if (!PyUnicode_Check(key)) {
+                PyErr_Format(PyExc_TypeError, "node keys must be 'str'");
+            }
+            int i = (int) pos;
+            node->u.list->keys[i] = talloc_strdup(ta_ctx, (char *)PyUnicode_AsUTF8(key));
+            makenode(ta_ctx, value, &node->u.list->values[i]);
+        }
+    }
 }
+
 
 // args: string -> string
 static PyObject* script_find_config_file(PyObject* self, PyObject* args)
@@ -878,7 +872,7 @@ static PyObject* script_enable_messagess(PyObject* self, PyObject* args)
         PyErr_SetString(PyExc_Exception, "Invalid Log Error");
         return NULL;
     }
-    return check_error(self, res);
+    return check_error(res);
 }
 
 // args: string
@@ -892,7 +886,7 @@ static PyObject* script_command(PyObject* self, PyObject* args)
         return NULL;
 
     int res = mpv_command_string(ctx->client, s);
-    return check_error(self, res);
+    return check_error(res);
 }
 
 // args: list of strings
@@ -933,7 +927,7 @@ static PyObject* script_commandv(PyObject* self, PyObject* args)
     arglist[length] = NULL;
 
     int res = mpv_command(ctx->client, arglist);
-    return check_error(self, res);
+    return check_error(res);
 }
 
 // args: two strings
@@ -948,7 +942,7 @@ static PyObject* script_set_property(PyObject* self, PyObject* args)
         return NULL;
 
     int res = mpv_set_property_string(ctx->client, p, v);
-    return check_error(self, res);
+    return check_error(res);
 }
 
 // args: string
@@ -963,7 +957,7 @@ static PyObject* script_del_property(PyObject* self, PyObject* args)
 
 
     int res = mpv_del_property(ctx->client, p);
-    return check_error(self, res);
+    return check_error(res);
 }
 
 static PyObject* script_enable_messages(PyObject* self, PyObject* args)
@@ -981,24 +975,8 @@ static PyObject* script_enable_messages(PyObject* self, PyObject* args)
         PyErr_SetString(PyExc_Exception, "Invalid log level");
         Py_RETURN_NONE;
     }
-    return check_error(self, r);
+    return check_error(r);
 }
-
-// args: name, native value
-// static PyObject* script_set_property_native(PyObject* self, PyObject* args)
-// {
-//     //TODO
-//     PyScriptCtx *ctx= (PyScriptCtx *)self;
-//
-//     const char *p;
-//
-//     if (!PyArg_ParseTuple(args, "s", &p))
-//         return NULL;
-//
-//
-//     int res = 0; // do work
-//     return check_error(self, res);
-// }
 
 // args: string,bool
 // static PyObject* script_set_property_bool(PyObject* self, PyObject* args)
