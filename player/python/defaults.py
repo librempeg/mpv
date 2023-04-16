@@ -39,6 +39,9 @@ class Registry:
     def commandv(self, *args):
         _mpv.commandv(*args)
 
+    def command(self, name):
+        _mpv.command(name)
+
 
 registry = Registry()
 
@@ -82,6 +85,35 @@ class Mpv:
 
     def process_event(self, event_id):
         self.debug(f"received event: {event_id}")
+
+    def command(self, name):
+        registry.command(name)
+
+    def commandv(self, name, *args):
+        registry.commandv(name, *args)
+
+    def find_config_file(self, filename):
+        return _mpv.find_config_file(filename)
+
+    def request_event(self, name, enable):
+        _mpv.request_event(name, enable)
+
+    def enable_messages(self, level):
+        _mpv.enable_messages(level)
+
+    def set_property(self, name, node):
+        """
+        :param str name: name of the property.
+        :param typing.Any node: can be str, int, float, None, bool, list and dict. Internally converted into an mpv_node.
+        """
+        _mpv.set_property(name, node)
+
+    def def_property(self, name):
+        _mpv.del_property(name)
+
+    def get_property(self, name):
+        return _mpv.get_property(name)
+
 
     next_bid = 1
 

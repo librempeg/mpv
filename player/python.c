@@ -95,6 +95,7 @@ static PyTypeObject PyScriptCtx_Type = {
 
 // prototypes
 static void makenode(void *ta_ctx, PyObject *obj, struct mpv_node *node);
+static PyObject *deconstructnode(struct mpv_node *node);
 static PyObject *check_error(int res);
 
 /*
@@ -304,6 +305,20 @@ get_client_context(PyObject *module)
     return cctx;
 }
 
+// args: string
+static PyObject* command(PyObject* mpv, PyObject* args)
+{
+    PyMpvObject *ctx = get_client_context(mpv);
+
+    const char *s;
+
+    if (!PyArg_ParseTuple(args, "s", &s))
+        return NULL;
+
+    int res = mpv_command_string(ctx->client, s);
+    return check_error(res);
+}
+
 static PyObject *
 commandv(PyObject *mpv, PyObject *args)
 {
@@ -323,11 +338,12 @@ commandv(PyObject *mpv, PyObject *args)
     int ret = mpv_command(ctx->client, argv);
     talloc_free(argv);
     Py_DECREF(ctx);
-    Py_RETURN_NONE;
+    return check_error(ret);
 }
 
 // args: string -> string
-static PyObject* find_config_file(PyObject* mpv, PyObject* args)
+static PyObject*
+find_config_file(PyObject* mpv, PyObject* args)
 {
     PyMpvObject *ctx = get_client_context(mpv);
 
@@ -351,7 +367,8 @@ static PyObject* find_config_file(PyObject* mpv, PyObject* args)
 }
 
 // args: string, bool
-static PyObject* request_event(PyObject* mpv, PyObject* args)
+static PyObject*
+request_event(PyObject* mpv, PyObject* args)
 {
     PyMpvObject *ctx = get_client_context(mpv);
 
@@ -377,7 +394,8 @@ static PyObject* request_event(PyObject* mpv, PyObject* args)
 }
 
 // args: string
-static PyObject* enable_messages(PyObject* mpv, PyObject* args)
+static PyObject*
+enable_messages(PyObject* mpv, PyObject* args)
 {
     PyMpvObject *ctx = get_client_context(mpv);
 
@@ -397,7 +415,8 @@ static PyObject* enable_messages(PyObject* mpv, PyObject* args)
 
 
 // args: name, native value
-static PyObject* set_property_native(PyObject* mpv, PyObject* args)
+static PyObject*
+set_property(PyObject* mpv, PyObject* args)
 {
     PyMpvObject *ctx = get_client_context(mpv);
     mpv_node node;
@@ -411,6 +430,43 @@ static PyObject* set_property_native(PyObject* mpv, PyObject* args)
     return check_error(res);
 }
 
+
+// args: string
+static PyObject*
+del_property(PyObject* mpv, PyObject* args)
+{
+    PyMpvObject *ctx = get_client_context(mpv);
+
+    const char *p;
+
+    if (!PyArg_ParseTuple(args, "s", &p))
+        return NULL;
+
+
+    int res = mpv_del_property(ctx->client, p);
+    return check_error(res);
+}
+
+
+static PyObject *
+get_property(PyObject* mpv, PyObject* args)
+{
+    PyMpvObject *ctx = get_client_context(mpv);
+
+    const char *name;
+
+    if (!PyArg_ParseTuple(args, "s", &name))
+        return NULL;
+
+    mpv_node *node = NULL;
+    int err = mpv_get_property(ctx->client, name, MPV_FORMAT_NODE, node);
+    if (err >= 0) {
+        return deconstructnode(node);
+    }
+    return check_error(err);
+}
+
+
 static PyMethodDef Mpv_methods[] = {
     {"extension_ok", (PyCFunction)mpv_extension_ok, METH_VARARGS,             /* METH_VARARGS | METH_KEYWORDS (PyObject *self, PyObject *args, PyObject **kwargs) */
      PyDoc_STR("Just a test method to see if extending is working.")},
@@ -422,8 +478,16 @@ static PyMethodDef Mpv_methods[] = {
      PyDoc_STR("")},
     {"enable_messages", (PyCFunction)enable_messages, METH_VARARGS,
      PyDoc_STR("")},
+    {"set_property", (PyCFunction)set_property, METH_VARARGS,
+     PyDoc_STR("")},
+    {"del_property", (PyCFunction)del_property, METH_VARARGS,
+     PyDoc_STR("")},
+    {"get_property", (PyCFunction)get_property, METH_VARARGS,
+     PyDoc_STR("")},
     {"commandv", (PyCFunction)commandv, METH_VARARGS,
-     PyDoc_STR("runs mpv_command.")},
+     PyDoc_STR("runs mpv_command given command name and args.")},
+    {"command", (PyCFunction)command, METH_VARARGS,
+     PyDoc_STR("runs mpv_command given the command name.")},
     {NULL, NULL, 0, NULL}                                                     /* Sentinal */
 };
 
@@ -915,191 +979,8 @@ deconstructnode(struct mpv_node *node)
         }
         return dnode;
     }
+    Py_RETURN_NONE;
 }
-
-
-// args: string
-static PyObject* script_command(PyObject* self, PyObject* args)
-{
-    PyScriptCtx *ctx= (PyScriptCtx *)self;
-
-    const char *s;
-
-    if (!PyArg_ParseTuple(args, "s", &s))
-        return NULL;
-
-    int res = mpv_command_string(ctx->client, s);
-    return check_error(res);
-}
-
-// args: list of strings
-static PyObject* script_commandv(PyObject* self, PyObject* args)
-{
-    PyScriptCtx *ctx= (PyScriptCtx *)self;
-
-    PyObject* list_obj;
-
-    if (!PyArg_ParseTuple(args, "O", &list_obj)) {
-        return NULL;
-    }
-
-    if (!PyList_Check(list_obj)) {
-        PyErr_SetString(PyExc_TypeError, "Argument must be a list of strings");
-        return NULL;
-    }
-
-    int length = PyList_Size(list_obj);
-
-    const char *arglist[50];
-
-    if (length > MP_ARRAY_SIZE(arglist)) {
-        PyErr_SetString(PyExc_TypeError, "Too many arguments");
-        return NULL;
-    }
-
-
-    for (Py_ssize_t i = 0; i < length; i++) {
-        PyObject* str_obj = PyList_GetItem(list_obj, i);
-        if (!PyUnicode_Check(str_obj)) {
-            PyErr_SetString(PyExc_TypeError, "List must contain only strings");
-            return NULL;
-        }
-        arglist[i] = PyUnicode_AsUTF8(str_obj);
-    }
-
-    arglist[length] = NULL;
-
-    int res = mpv_command(ctx->client, arglist);
-    return check_error(res);
-}
-
-// args: two strings
-static PyObject* script_set_property(PyObject* self, PyObject* args)
-{
-    PyScriptCtx *ctx= (PyScriptCtx *)self;
-
-    const char *p;
-    const char *v;
-
-    if (!PyArg_ParseTuple(args, "ss", &p, &v))
-        return NULL;
-
-    int res = mpv_set_property_string(ctx->client, p, v);
-    return check_error(res);
-}
-
-// args: string
-static PyObject* script_del_property(PyObject* self, PyObject* args)
-{
-    PyScriptCtx *ctx= (PyScriptCtx *)self;
-
-    const char *p;
-
-    if (!PyArg_ParseTuple(args, "s", &p))
-        return NULL;
-
-
-    int res = mpv_del_property(ctx->client, p);
-    return check_error(res);
-}
-
-// args: string,bool
-// static PyObject* script_set_property_bool(PyObject* self, PyObject* args)
-// {
-//     PyScriptCtx *ctx= (PyScriptCtx *)self;
-//
-//     const char *p;
-//     bool v;
-//
-//     if (!PyArg_ParseTuple(args, "sp", &p, &v))
-//         return NULL;
-//
-//     int res = mpv_set_property(ctx->client, p, MPV_FORMAT_FLAG, &v);
-//     return check_error(self, res);
-// }
-
-// args: name
-// static PyObject* script_get_property_number(PyObject* self, PyObject* args)
-// {
-//     PyScriptCtx *ctx= (PyScriptCtx *)self;
-//
-//     double result;
-//     const char* name;
-//
-//     if (!PyArg_ParseTuple(args, "s", &name))
-//         return NULL;
-//
-//     int err = mpv_get_property(ctx->client, name, MPV_FORMAT_DOUBLE, &result);
-//     if(err >= 0) {
-//         return PyLong_FromDouble(result);
-//     } else {
-//         //TODO
-//         PyErr_SetString(PyExc_Exception, mpv_error_string(err));
-//         Py_RETURN_NONE;
-//     }
-// }
-
-
-// args: name
-// static PyObject* script_get_property_bool(PyObject* self, PyObject* args)
-// {
-//     PyScriptCtx *ctx= (PyScriptCtx *)self;
-//
-//     const char *name;
-//
-//     if (!PyArg_ParseTuple(args, "s", &name))
-//         return NULL;
-//
-//     int result = 0;
-//     int err = mpv_get_property(ctx->client, name, MPV_FORMAT_FLAG, &result);
-//     if (err >= 0) {
-//         bool ret = !!result;
-//         if(ret) {
-//             Py_RETURN_TRUE;
-//         } else {
-//             Py_RETURN_FALSE;
-//         }
-//     }
-//
-//     return check_error(self, res);
-// }
-
-// static PyObject* script_set_property_native(PyObject* self, PyObject* args, int is_osd)
-// {
-//
-//     PyScriptCtx *ctx= (PyScriptCtx *)self;
-//
-//     const char *name;
-//     PyObject *py_node;
-//
-//     if (!PyArg_ParseTuple(args, "sO", &p, &py_node))
-//         return NULL;
-//
-//     char *result = NULL;
-//     int err = mpv_get_property(ctx->client, name, MPV_FORMAT_STRING, &result);
-//     if (err >= 0) {
-//         return PyUnicode_FromString(result);
-//     }
-//     return check_error(self, err);
-// }
-
-
-// static PyObject* script_get_property(PyObject* self, PyObject* args, int is_osd)
-// {
-//     PyScriptCtx *ctx= (PyScriptCtx *)self;
-//
-//     const char *name;
-//
-//     if (!PyArg_ParseTuple(args, "s", &p))
-//         return NULL;
-//
-//     char *result = NULL;
-//     int err = mpv_get_property(ctx->client, name, MPV_FORMAT_STRING, &result);
-//     if (err >= 0) {
-//         return PyUnicode_FromString(result);
-//     }
-//     return check_error(self, err);
-// }
 
 
 /************************************************************************************************/
