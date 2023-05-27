@@ -27,6 +27,10 @@
 #include "ao_coreaudio_properties.h"
 #include "ao_coreaudio_utils.h"
 
+#if !HAVE_MACOS_12_0_FEATURES
+#define kAudioObjectPropertyElementMain kAudioObjectPropertyElementMaster
+#endif
+
 struct priv {
     AudioDeviceID device;
     AudioUnit audio_unit;
@@ -369,7 +373,7 @@ static int hotplug_init(struct ao *ao)
         AudioObjectPropertyAddress addr = {
             hotplug_properties[i],
             kAudioObjectPropertyScopeGlobal,
-            kAudioObjectPropertyElementMaster
+            kAudioObjectPropertyElementMain
         };
         err = AudioObjectAddPropertyListener(
             kAudioObjectSystemObject, &addr, hotplug_cb, (void *)ao);
@@ -394,7 +398,7 @@ static void hotplug_uninit(struct ao *ao)
         AudioObjectPropertyAddress addr = {
             hotplug_properties[i],
             kAudioObjectPropertyScopeGlobal,
-            kAudioObjectPropertyElementMaster
+            kAudioObjectPropertyElementMain
         };
         err = AudioObjectRemovePropertyListener(
             kAudioObjectSystemObject, &addr, hotplug_cb, (void *)ao);
