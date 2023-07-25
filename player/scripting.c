@@ -317,11 +317,13 @@ static int64_t mp_load_python_scripts(struct MPContext *mpctx, char **py_scripts
     // thread detaches itself and never returns
     pthread_create(&thread, NULL, script_thread, arg);
 
-    while (!PYcINITIALIZED) {
-        // spin, wait for python to initialize
-        // TODO: how to make this better?
-        sleep(1);
-    }
+    // not sure; if this is really needed. There's no restriction from the python end.
+    // mpv core guys should decide if this is necessary.
+    // while (!PYcINITIALIZED) {
+    //     // spin, wait for python to initialize
+    //     // TODO: how to make this better?
+    //     sleep(0.1);
+    // }
 
     return id;
 }

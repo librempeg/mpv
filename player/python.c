@@ -75,12 +75,13 @@ static const char *const builtin_files[][2] = {
 typedef struct {
     PyObject_HEAD
 
-    char **scripts;
-    size_t script_count;
-    struct mpv_handle *client;
-    struct MPContext *mpctx;
-    struct mp_log *log;
-    struct stats_ctx *stats;
+    char                **scripts;
+    size_t              script_count;
+    struct mpv_handle   *client;
+    struct MPContext    *mpctx;
+    struct mp_log       *log;
+    void                *ta_ctx;
+    struct stats_ctx    *stats;
 } PyScriptCtx;
 
 
@@ -216,12 +217,23 @@ static PyTypeObject PyMpv_Type = {
 static PyObject *
 mpvmainloop_wait_event(PyObject *mpvmainloop, PyObject *args)
 {
-    PyObject *timeout = PyTuple_GetItem(args, 0);
     PyScriptCtx *ctx = (PyScriptCtx *)PyObject_GetAttrString(mpvmainloop, "context");
-    mpv_event *event = mpv_wait_event(ctx->client, PyLong_AsLong(timeout));
-    Py_DECREF(timeout);
+    int timeout;
+    PyArg_ParseTuple(args, "i", &timeout);
+    mpv_event *event = mpv_wait_event(ctx->client, timeout);
     Py_DECREF(ctx);
-    PyObject *ret = PyLong_FromLong(event->event_id);
+    PyObject *ret = PyTuple_New(2);
+    PyTuple_SetItem(ret, 0, PyLong_FromLong(event->event_id));
+    if (event->event_id == MPV_EVENT_CLIENT_MESSAGE) {
+        mpv_event_client_message *m = (mpv_event_client_message *)event->data;
+        PyObject *data = PyTuple_New(m->num_args);
+        for (int i = 0; i < m->num_args; i++) {
+            PyTuple_SetItem(data, i, PyUnicode_DecodeFSDefault(m->args[i]));
+        }
+        PyTuple_SetItem(ret, 1, data);
+        return ret;
+    }
+    PyTuple_SetItem(ret, 1, Py_NewRef(Py_None));
     return ret;
 }
 
@@ -279,16 +291,6 @@ static PyObject *script_log(struct mp_log *log, PyObject *args)
     Py_RETURN_NONE;
 }
 
-
-static PyObject *
-handle_log(PyObject *mpv, PyObject *args)
-{
-    PyMpvObject *pyMpv = (PyMpvObject *)PyObject_GetAttrString(mpv, "context");
-    struct mp_log *log = pyMpv->log;
-    Py_DECREF(pyMpv);
-    return script_log(log, args);
-}
-
 static PyObject *
 mainloop_log_handle(PyObject *mpvmainloop, PyObject *args)
 {
@@ -305,8 +307,30 @@ get_client_context(PyObject *module)
     return cctx;
 }
 
+static PyObject *
+handle_log(PyObject *mpv, PyObject *args)
+{
+    PyMpvObject *pyMpv = get_client_context(mpv);
+    return script_log(pyMpv->log, args);
+}
+
+static PyObject *
+command(PyObject *mpv, PyObject *args)
+{
+    PyMpvObject *ctx = get_client_context(mpv);
+    mpv_node cmd;
+    makenode(ctx->ta_ctx, PyTuple_GetItem(args, 0), &cmd);
+    mpv_node *result = talloc_zero(ctx->ta_ctx, mpv_node);
+    if (check_error(mpv_command_node(ctx->client, &cmd, result)) != Py_True) {
+        mp_msg(ctx->log, mp_msg_find_level("error"), "failed to run node command\n");
+        Py_RETURN_NONE;
+    }
+    return deconstructnode(result);
+}
+
 // args: string
-static PyObject* command(PyObject* mpv, PyObject* args)
+static PyObject *
+command_string(PyObject* mpv, PyObject* args)
 {
     PyMpvObject *ctx = get_client_context(mpv);
 
@@ -322,22 +346,18 @@ static PyObject* command(PyObject* mpv, PyObject* args)
 static PyObject *
 commandv(PyObject *mpv, PyObject *args)
 {
-    // Does not have node support yet
     Py_ssize_t arg_length = PyTuple_Size(args);
     const char **argv = talloc_array(NULL, const char *, arg_length + 1);
     for (Py_ssize_t i = 0; i < arg_length; i++) {
-        // There could be better way to do this
-        PyObject *arg = PyTuple_GetItem(args, i);
         char *carg;
-        PyArg_Parse(arg, "s", &carg);
-        Py_DECREF(arg);
-        argv[i] = carg;
+        PyArg_Parse(PyTuple_GetItem(args, i), "s", &carg);
+        argv[i] = talloc_strdup(argv, carg);
     }
     argv[arg_length] = NULL;
     PyMpvObject *ctx = get_client_context(mpv);
     int ret = mpv_command(ctx->client, argv);
     talloc_free(argv);
-    Py_DECREF(ctx);
+    Py_DECREF(args);
     return check_error(ret);
 }
 
@@ -372,25 +392,13 @@ request_event(PyObject* mpv, PyObject* args)
 {
     PyMpvObject *ctx = get_client_context(mpv);
 
-    const char *event;
-    bool enable;
+    int event_id, enable;
 
-    if (!PyArg_ParseTuple(args, "sp", &event, &enable))
+    if (!PyArg_ParseTuple(args, "ii", &event_id, &enable)) {
         return NULL;
-
-    for (int n = 0; n < 256; n++) {
-        // some n's may be missing ("holes"), returning NULL
-        const char *name = mpv_event_name(n);
-        if (name && strcmp(name, event) == 0) {
-            if (mpv_request_event(ctx->client, n, enable) >= 0) {
-                Py_RETURN_TRUE;
-            } else {
-                Py_RETURN_FALSE;
-            }
-            return NULL;
-        }
     }
-    Py_RETURN_NONE;
+
+    return check_error(mpv_request_event(ctx->client, event_id, enable));
 }
 
 // args: string
@@ -466,6 +474,73 @@ get_property(PyObject* mpv, PyObject* args)
     return check_error(err);
 }
 
+static PyObject *
+get_property_string(PyObject *mpv, PyObject *args)
+{
+    PyMpvObject *ctx = get_client_context(mpv);
+
+    const char *name;
+
+    if (!PyArg_ParseTuple(args, "s", &name))
+        return NULL;
+
+    char *prop = mpv_get_property_string(ctx->client, name);
+    return PyUnicode_DecodeFSDefault(prop);
+}
+
+static PyObject *
+get_property_osd(PyObject *mpv, PyObject *args)
+{
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+observe_property(PyObject *mpv, PyObject *args)
+{
+    PyMpvObject *ctx = get_client_context(mpv);
+    const char *name;
+    PyArg_ParseTuple(args, "s", &name);
+    uint64_t reply_userdata = 0;
+    return check_error(mpv_observe_property(
+        ctx->client, reply_userdata, name, MPV_FORMAT_NODE));
+}
+
+static PyObject *
+unobserve_property(PyObject *mpv, PyObject *args)
+{
+    PyMpvObject *ctx = get_client_context(mpv);
+    uint64_t reply_userdata = 0;
+    return check_error(mpv_unobserve_property(ctx->client, reply_userdata));
+}
+
+static PyObject *
+mpv_input_define_section(PyObject *mpv, PyObject *args)
+{
+    char *name, *location, *contents, *owner;
+    bool builtin;
+    PyArg_ParseTuple(args, "sssps", &name, &location, &contents, &builtin, &owner);
+
+    // why the f**k do I need this!!!
+    PyArg_Parse(PyTuple_GetItem(args, 0), "s", &name);
+
+    PyMpvObject *ctx = get_client_context(mpv);
+    mp_input_define_section(ctx->mpctx->input, name, location, contents, builtin, owner);
+    mp_msg(ctx->log, mp_msg_find_level("debug"), "c duh\n");
+    Py_RETURN_NONE;
+}
+
+
+static PyObject *
+mpv_input_enable_section(PyObject *mpv, PyObject *args)
+{
+    char *name;
+    int flags;
+    PyArg_ParseTuple(args, "si", &name, &flags);
+    PyMpvObject *ctx = get_client_context(mpv);
+    mp_input_enable_section(ctx->mpctx->input, name, flags);
+    Py_RETURN_NONE;
+}
+
 
 static PyMethodDef Mpv_methods[] = {
     {"extension_ok", (PyCFunction)mpv_extension_ok, METH_VARARGS,             /* METH_VARARGS | METH_KEYWORDS (PyObject *self, PyObject *args, PyObject **kwargs) */
@@ -484,10 +559,22 @@ static PyMethodDef Mpv_methods[] = {
      PyDoc_STR("")},
     {"get_property", (PyCFunction)get_property, METH_VARARGS,
      PyDoc_STR("")},
+    {"get_property_string", (PyCFunction)get_property_string, METH_VARARGS,
+     PyDoc_STR("")},
+    {"observe_property", (PyCFunction)observe_property, METH_VARARGS,
+     PyDoc_STR("")},
+    {"unobserve_property", (PyCFunction)unobserve_property, METH_VARARGS,
+     PyDoc_STR("")},
+    {"mpv_input_define_section", (PyCFunction)mpv_input_define_section, METH_VARARGS,
+     PyDoc_STR("")},
+    {"mpv_input_enable_section", (PyCFunction)mpv_input_enable_section, METH_VARARGS,
+     PyDoc_STR("")},
     {"commandv", (PyCFunction)commandv, METH_VARARGS,
      PyDoc_STR("runs mpv_command given command name and args.")},
+    {"command_string", (PyCFunction)command_string, METH_VARARGS,
+     PyDoc_STR("runs mpv_command_string given a string as the only argument.")},
     {"command", (PyCFunction)command, METH_VARARGS,
-     PyDoc_STR("runs mpv_command given the command name.")},
+     PyDoc_STR("runs mpv_command_node given py structure(s, as in list) convertible to mpv_node as the only argument.")},
     {NULL, NULL, 0, NULL}                                                     /* Sentinal */
 };
 
@@ -541,16 +628,17 @@ PyMODINIT_FUNC PyInit_mpv(void)
 
 
 static PyObject *
-notify_client(PyObject *mpvmainloop, PyObject *args)
+notify_clients(PyObject *mpvmainloop, PyObject *args)
 {
-    PyObject *event_id = PyTuple_GetItem(args, 0);
-    long eid = PyLong_AsLong(event_id);
-    Py_DECREF(event_id);
     PyScriptCtx *ctx = (PyScriptCtx *)PyObject_GetAttrString(mpvmainloop, "context");
+    mainThread = PyThreadState_Swap(NULL);
     for (size_t i = 0; i < ctx->script_count; i++) {
         PyThreadState_Swap(clients[i]->threadState);
         PyObject *mpv = PyObject_GetAttrString(clients[i]->pyclient, "mpv");
-        PyObject_CallMethod(mpv, "process_event", "i", eid);
+        PyObject *event_processor = PyObject_GetAttrString(mpv, "process_event");
+        Py_INCREF(args);
+        PyObject_Call(event_processor, args, NULL);
+        Py_DECREF(event_processor);
         Py_DECREF(mpv);
     }
     PyThreadState_Swap(mainThread);
@@ -559,11 +647,29 @@ notify_client(PyObject *mpvmainloop, PyObject *args)
 }
 
 
+static PyObject *
+init_clients(PyObject *mpvmainloop, PyObject *args)
+{
+    PyScriptCtx *ctx = (PyScriptCtx *)PyObject_GetAttrString(mpvmainloop, "context");
+    mainThread = PyThreadState_Swap(NULL);
+    for (size_t i = 0; i < ctx->script_count; i++) {
+        PyThreadState_Swap(clients[i]->threadState);
+        PyObject *mpv = PyObject_GetAttrString(clients[i]->pyclient, "mpv");
+        PyObject_CallMethod(mpv, "flush", NULL);
+        Py_DECREF(mpv);
+    }
+    PyThreadState_Swap(mainThread);
+    Py_RETURN_NONE;
+}
+
+
 static PyMethodDef MpvMainLoop_methods[] = {
     {"wait_event", (PyCFunction)mpvmainloop_wait_event, METH_VARARGS,
      PyDoc_STR("Wrapper around the mpv_wait_event")},
-    {"notify_client", (PyCFunction)notify_client, METH_VARARGS,
+    {"notify_clients", (PyCFunction)notify_clients, METH_VARARGS,
      PyDoc_STR("Notifies the clients in each thread")},
+    {"init_clients", (PyCFunction)init_clients, METH_VARARGS,
+     PyDoc_STR("")},
     {"handle_log", (PyCFunction)mainloop_log_handle, METH_VARARGS,
      PyDoc_STR("handles log records emitted from python thread.")},
     {NULL, NULL, 0, NULL}
@@ -662,14 +768,10 @@ initialize_python(PyScriptCtx *ctx)
         return -1;
     }
 
-    char **client_names = talloc_array(NULL, char *, ctx->script_count);
-    clients = talloc_array(NULL, PyMpvObject *, ctx->script_count + 1);
+    char **client_names = talloc_array(ctx->ta_ctx, char *, ctx->script_count);
+    clients = talloc_array(ctx->ta_ctx, PyMpvObject *, ctx->script_count + 1);
 
     Py_Initialize();
-
-    // Fails with CANARY override. TODO: update CANARY for python?
-    // ctx->stats = stats_ctx_create(ctx, ctx->mpctx->global, "script/python");
-    // stats_register_thread_cputime(ctx->stats, "cpu");
 
     // Keep an extra dummy interpreter to repopulate the the global interpreter
     // in case we through away the last interpreter which seem to erase some
@@ -679,7 +781,7 @@ initialize_python(PyScriptCtx *ctx)
         pyMpv->log = ctx->log;
         pyMpv->client = ctx->client;
         pyMpv->mpctx = ctx->mpctx;
-        pyMpv->ta_ctx = talloc_new(NULL);
+        pyMpv->ta_ctx = talloc_new(ctx->ta_ctx);
         pyMpv->threadState = Py_NewInterpreter();
         clients[i] = pyMpv;
     }
@@ -730,14 +832,12 @@ initialize_python(PyScriptCtx *ctx)
 
         PyObject *os = PyImport_ImportModule("os");
         PyObject *path = PyObject_GetAttrString(os, "path");
-        PyObject *exists = PyObject_GetAttrString(path, "exists");
         Py_DECREF(os);
-        Py_DECREF(path);
-        if (PyObject_CallOneArg(exists, filename) == Py_False) {
+        if (PyObject_CallMethod(path, "exists", "s", ctx->scripts[i]) == Py_False) {
             discarded_client++;
             mp_msg(ctx->log, mp_msg_find_level("error"), "%s does not exists.\n", ctx->scripts[i]);
             Py_DECREF(filename);
-            Py_DECREF(exists);
+            Py_DECREF(path);
             Py_DECREF(pympv);
             Py_DECREF(defaults);
             Py_DECREF(client_name);
@@ -747,7 +847,7 @@ initialize_python(PyScriptCtx *ctx)
             PyThreadState_Swap(NULL);
             continue;
         }
-        Py_DECREF(exists);
+        Py_DECREF(path);
 
         char *cname;
         PyArg_Parse(client_name, "s", &cname);
@@ -780,6 +880,10 @@ initialize_python(PyScriptCtx *ctx)
             PyThreadState_Swap(NULL);
             continue;
         }
+
+        PyObject *mpv = PyObject_GetAttrString(client, "mpv");
+        PyObject_CallMethod(mpv, "flush", NULL);
+        Py_DECREF(mpv);
 
         pyMpv->pyclient = Py_NewRef(client);
 
@@ -814,7 +918,7 @@ initialize_python(PyScriptCtx *ctx)
 
     if (discarded_client > 0) {
         ctx->script_count = ctx->script_count - discarded_client;
-        clients = talloc_realloc(NULL, clients, PyMpvObject *, ctx->script_count);
+        clients = talloc_realloc(ctx->ta_ctx, clients, PyMpvObject *, ctx->script_count);
     }
 
     PyObject *mpvmainloop = PyImport_ImportModule("mpvmainloop");
@@ -838,12 +942,10 @@ initialize_python(PyScriptCtx *ctx)
 
     PyObject *mainloop = load_local_pystrings(builtin_files[1][1], "mainloop");
     PyObject *ml = PyObject_GetAttrString(mainloop, "ml");
-    PyObject *run_s = PyUnicode_FromString("run");
 
     PYcINITIALIZED = true;
 
-    PyObject_CallMethodNoArgs(ml, run_s);
-    Py_DECREF(run_s);
+    PyObject_CallMethod(ml, "run", NULL);
     Py_DECREF(ml);
     Py_DECREF(mainloop);
     Py_DECREF(mpvmainloop);
@@ -860,6 +962,9 @@ static int s_load_python(struct mp_script_args *args)
     ctx->log = args->log;
     ctx->scripts = args->py_scripts;
     ctx->script_count = args->script_count;
+    ctx->ta_ctx = talloc_new(NULL);
+    ctx->stats = stats_ctx_create(ctx->ta_ctx, ctx->mpctx->global, "script/python");
+    stats_register_thread_cputime(ctx->stats, "cpu");
 
     if (initialize_python(ctx) < 0) {
         return -1;
@@ -881,12 +986,14 @@ static int s_load_python(struct mp_script_args *args)
  *  Main mp.* scripting APIs and helpers
  *********************************************************************/
 
- static PyObject* check_error(int err)
+static PyObject* check_error(int err)
 {
     if (err >= 0) {
         Py_RETURN_TRUE;
     }
-    PyErr_SetString(PyExc_Exception, mpv_error_string(err));
+    const char *errstr = mpv_error_string(err);
+    printf("%s\n", errstr);
+    PyErr_SetString(PyExc_Exception, errstr);
     Py_RETURN_NONE;
 }
 

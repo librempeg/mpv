@@ -1,3 +1,4 @@
+import threading
 import mpvmainloop
 
 
@@ -45,7 +46,7 @@ class MainLoop(object):
             raise Exception
         return self.clients.index(client_name)
 
-    def handle_event(self, event_id):
+    def handle_event(self, event_id, data):
         """
         Returns:
             boolean specifing whether some event loop breaking
@@ -58,17 +59,18 @@ class MainLoop(object):
         elif event_id == self.MPV_EVENT_NONE:
             return False
         else:
-            mpvmainloop.notify_client(event_id)
+            mpvmainloop.notify_clients(event_id, data)
         return False
+
+    initialized = False
 
     def wait_events(self):
         while True:
-            event_id = mpvmainloop.wait_event(100000000)
-            if self.handle_event(event_id):
+            event_id, data = mpvmainloop.wait_event(-1)
+            if self.handle_event(event_id, data):
                 break
 
     def run(self):
-        ml.debug("running main loop")
         self.wait_events()
 
 
