@@ -212,4 +212,3 @@ class Mpv:
 
 
 mpv = Mpv()
-mpv.info(f"okay from extension {client_name}: {mpv.extension_ok()}")

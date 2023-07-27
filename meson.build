@@ -1632,6 +1632,7 @@ conf_data.set_quoted('DEFAULT_CDROM_DEVICE', cd_device)
 
 if get_option('pydebug')
 conf_data.set('Py_DEBUG', 1)
+conf_data.set('Py_REF_DEBUG', 1)
 endif
 
 # Loop over all features in the build, create a define and add them to config.h

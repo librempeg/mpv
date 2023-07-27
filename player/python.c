@@ -311,7 +311,9 @@ static PyObject *
 handle_log(PyObject *mpv, PyObject *args)
 {
     PyMpvObject *pyMpv = get_client_context(mpv);
-    return script_log(pyMpv->log, args);
+    struct mp_log *log = pyMpv->log;
+    Py_DECREF(pyMpv);
+    return script_log(log, args);
 }
 
 static PyObject *
@@ -323,8 +325,10 @@ command(PyObject *mpv, PyObject *args)
     mpv_node *result = talloc_zero(ctx->ta_ctx, mpv_node);
     if (check_error(mpv_command_node(ctx->client, &cmd, result)) != Py_True) {
         mp_msg(ctx->log, mp_msg_find_level("error"), "failed to run node command\n");
+        Py_DECREF(ctx);
         Py_RETURN_NONE;
     }
+    Py_DECREF(ctx);
     return deconstructnode(result);
 }
 
@@ -340,6 +344,7 @@ command_string(PyObject* mpv, PyObject* args)
         return NULL;
 
     int res = mpv_command_string(ctx->client, s);
+    Py_DECREF(ctx);
     return check_error(res);
 }
 
@@ -357,7 +362,7 @@ commandv(PyObject *mpv, PyObject *args)
     PyMpvObject *ctx = get_client_context(mpv);
     int ret = mpv_command(ctx->client, argv);
     talloc_free(argv);
-    Py_DECREF(args);
+    Py_DECREF(ctx);
     return check_error(ret);
 }
 
@@ -376,14 +381,14 @@ find_config_file(PyObject* mpv, PyObject* args)
     if (path) {
         PyObject* ret =  PyUnicode_FromString(path);
         talloc_free(path);
+        Py_DECREF(ctx);
         return ret;
     } else {
         talloc_free(path);
         PyErr_SetString(PyExc_FileNotFoundError, "Not found");
+        Py_DECREF(ctx);
         return NULL;
     }
-
-    Py_RETURN_NONE;
 }
 
 // args: string, bool
@@ -398,7 +403,11 @@ request_event(PyObject* mpv, PyObject* args)
         return NULL;
     }
 
-    return check_error(mpv_request_event(ctx->client, event_id, enable));
+    int ret = mpv_request_event(ctx->client, event_id, enable);
+
+    Py_DECREF(ctx);
+
+    return check_error(ret);
 }
 
 // args: string
@@ -409,15 +418,18 @@ enable_messages(PyObject* mpv, PyObject* args)
 
     const char *level;
 
-    if (!PyArg_ParseTuple(args, "s", &level))
+    if (!PyArg_ParseTuple(args, "s", &level)) {
+        Py_DECREF(ctx);
         return NULL;
-
+    }
 
     int res = mpv_request_log_messages(ctx->client, level);
     if (res == MPV_ERROR_INVALID_PARAMETER) {
         PyErr_SetString(PyExc_Exception, "Invalid Log Error");
+        Py_DECREF(ctx);
         return NULL;
     }
+    Py_DECREF(ctx);
     return check_error(res);
 }
 
@@ -430,11 +442,15 @@ set_property(PyObject* mpv, PyObject* args)
     mpv_node node;
 
     char *name;
-    PyObject *property_name = PyTuple_GetItem(args, 0);
-    PyArg_Parse(property_name, "s", &name);
+    PyObject *value;
+    // PyObject *property_name = PyTuple_GetItem(args, 0);
+    PyArg_ParseTuple(args, "sO", &name, &value);
+    // PyArg_Parse(property_name, "s", &name);
 
-    makenode(ctx->ta_ctx, PyTuple_GetItem(args, 1), &node);
+    makenode(ctx->ta_ctx, value, &node);
+    Py_DECREF(value);
     int res = mpv_set_property(ctx->client, name, MPV_FORMAT_NODE, &node);
+    Py_DECREF(ctx);
     return check_error(res);
 }
 
@@ -625,7 +641,6 @@ PyMODINIT_FUNC PyInit_mpv(void)
 {
     return PyModuleDef_Init(&mpv_module_def);
 }
-
 
 static PyObject *
 notify_clients(PyObject *mpvmainloop, PyObject *args)
@@ -908,7 +923,6 @@ initialize_python(PyScriptCtx *ctx)
 
     if (ctx->script_count == discarded_client) {
         mp_msg(ctx->log, mp_msg_find_level("warn"), "no active client found.");
-        PYcINITIALIZED = true;
         talloc_free(clients);
         talloc_free(client_names);
         return -1;
@@ -942,8 +956,6 @@ initialize_python(PyScriptCtx *ctx)
 
     PyObject *mainloop = load_local_pystrings(builtin_files[1][1], "mainloop");
     PyObject *ml = PyObject_GetAttrString(mainloop, "ml");
-
-    PYcINITIALIZED = true;
 
     PyObject_CallMethod(ml, "run", NULL);
     Py_DECREF(ml);
