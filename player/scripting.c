@@ -318,18 +318,20 @@ static int64_t mp_load_python_scripts(struct MPContext *mpctx, char **py_scripts
     return id;
 }
 
-bool put_in_py_scripts(size_t *counts, char **py_scripts, char *file)
+static void push_to_py_scripts_array(size_t *counts, char **py_scripts, char *file)
 {
-    void push_to_array(char *f) {
-        if (counts[1] == counts[0]) {
-            py_scripts = talloc_realloc(NULL, py_scripts, char *, counts[0] * 2);
-        }
-        py_scripts[counts[0]] = talloc_strdup(NULL, f);
-        counts[0] = counts[0] + 1;
+    if (counts[1] == counts[0]) {
+        py_scripts = talloc_realloc(NULL, py_scripts, char *, counts[0] * 2);
     }
+    py_scripts[counts[0]] = talloc_strdup(NULL, file);
+    counts[0] = counts[0] + 1;
+}
+
+static bool put_in_py_scripts(size_t *counts, char **py_scripts, char *file)
+{
     char *ext = mp_splitext(file, NULL);
     if (ext && strcasecmp(ext, "py") == 0) {
-        push_to_array(file);
+        push_to_py_scripts_array(counts, py_scripts, file);
         return true;
     }
     if (!ext) {
@@ -338,7 +340,7 @@ bool put_in_py_scripts(size_t *counts, char **py_scripts, char *file)
         if (!stat(file, &s) && S_ISDIR(s.st_mode)) {
             char *filepath = mp_path_join(NULL, file, "main.py");
             if (!stat(filepath, &s) && S_ISREG(s.st_mode)) {
-                push_to_array(file);
+                push_to_py_scripts_array(counts, py_scripts, file);
                 return true;
             }
         }
