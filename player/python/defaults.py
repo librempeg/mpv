@@ -31,6 +31,8 @@ class Mpv:
     MPV_EVENT_CLIENT_MESSAGE = 16
 
     def log(self, level, *args):
+        if not args:
+            return
         msg = ' '.join([str(msg) for msg in args])
         _mpv.handle_log([level, f"({client_name}) {msg}"])
 
@@ -145,7 +147,7 @@ class Mpv:
         if builtin_binds:
             name = f"py_{client_name}_kbs_builtin"
             self.mpv_input_define_section(name, location, builtin_binds, True, client_name)
-            self.mpv_input_enable_section(name, self.MP_INPUT_EXCLUSIVE | self.MP_INPUT_ALLOW_VO_DRAGGING | self.MP_INPUT_ALLOW_HIDE_CURSOR)
+            self.mpv_input_enable_section(name, self.MP_INPUT_ON_TOP)
 
         reg_binds = "\n".join(sorted(
             [binding['input'] for binding in registry.binds.values() \
@@ -153,7 +155,7 @@ class Mpv:
         if reg_binds:
             name = f"py_{client_name}_kbs"
             self.mpv_input_define_section(name, location, reg_binds, False, client_name)
-            self.mpv_input_enable_section(name, self.MP_INPUT_EXCLUSIVE | self.MP_INPUT_ALLOW_VO_DRAGGING | self.MP_INPUT_ALLOW_HIDE_CURSOR)
+            self.mpv_input_enable_section(name, self.MP_INPUT_ON_TOP)
 
     def set_input_sections(self):
         self.set_key_bindings_input_section()

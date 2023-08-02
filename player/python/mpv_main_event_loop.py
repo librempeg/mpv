@@ -70,6 +70,9 @@ class MainLoop(object):
             if self.handle_event(event_id, data):
                 break
 
+    def request_event(self, name, enable):
+        return mpvmainloop.request_event(name, enable)
+
     def run(self):
         self.wait_events()
 
