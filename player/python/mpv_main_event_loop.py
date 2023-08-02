@@ -36,7 +36,7 @@ class MainLoop(object):
     def fatal(self, *a):
         mpvmainloop.handle_log(['fatal', ' '.join([str(msg) for msg in a])])
 
-    clients = []
+    clients = {}
 
     def __init__(self, clients):
         self.clients = clients
@@ -44,7 +44,7 @@ class MainLoop(object):
     def get_client_index(self, client_name):
         if client_name not in self.clients:
             raise Exception
-        return self.clients.index(client_name)
+        return self.clients[client_name].index
 
     def handle_event(self, event_id, data):
         """
@@ -73,7 +73,18 @@ class MainLoop(object):
     def request_event(self, name, enable):
         return mpvmainloop.request_event(name, enable)
 
+    def enable_client_message(self):
+        self.debug("enabling client message")
+        if self.request_event(self.MPV_EVENT_CLIENT_MESSAGE, 1):
+            self.debug("client-message enabled")
+        else:
+            self.debug("failed to enable client-message")
+
     def run(self):
+        for client in self.clients.values():
+            if client.has_binding():
+                self.enable_client_message()
+                break
         self.wait_events()
 
 

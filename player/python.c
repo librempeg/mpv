@@ -377,28 +377,37 @@ find_config_file(PyObject* mpv, PyObject* args)
     }
 }
 
-// static PyObject *
-// request_event_(mpv_client *client, int event_id, int enable)
-// {
-//
-// }
-
-// args: string, bool
 static PyObject *
-request_event(PyObject* mpv, PyObject* args)
+request_event_(mpv_handle *client, PyObject *args)
+{
+    int event_id, enable;
+    PyArg_ParseTuple(args, "ii", &event_id, &enable);
+
+    return check_error(mpv_request_event(client, event_id, enable));
+}
+
+// args: int, int
+static PyObject *
+request_event_mpv(PyObject* mpv, PyObject* args)
 {
     PyMpvObject *ctx = get_client_context(mpv);
 
-    int event_id, enable;
-
-    if (!PyArg_ParseTuple(args, "ii", &event_id, &enable)) {
-        return NULL;
-    }
-
-    int ret = mpv_request_event(ctx->client, event_id, enable);
+    PyObject *ret = request_event_(ctx->client, args);
     Py_DECREF(ctx);
 
-    return check_error(ret);
+    return ret;
+}
+
+// args: int, int
+static PyObject *
+request_event_ml(PyObject* ml, PyObject* args)
+{
+    PyScriptCtx *ctx = get_global_context(ml);
+
+    PyObject *ret = request_event_(ctx->client, args);
+    Py_DECREF(ctx);
+
+    return ret;
 }
 
 // args: string
@@ -559,7 +568,7 @@ static PyMethodDef Mpv_methods[] = {
      PyDoc_STR("handles log records emitted from python thread.")},
     {"find_config_file", (PyCFunction)find_config_file, METH_VARARGS,
      PyDoc_STR("")},
-    {"request_event", (PyCFunction)request_event, METH_VARARGS,
+    {"request_event", (PyCFunction)request_event_mpv, METH_VARARGS,
      PyDoc_STR("")},
     {"enable_messages", (PyCFunction)enable_messages, METH_VARARGS,
      PyDoc_STR("")},
@@ -642,9 +651,7 @@ notify_clients(PyObject *mpvmainloop, PyObject *args)
     mainThread = PyThreadState_Swap(NULL);
     for (size_t i = 0; i < ctx->script_count; i++) {
         PyThreadState_Swap(clients[i]->threadState);
-        PyObject *mpv = PyObject_GetAttrString(clients[i]->pyclient, "mpv");
-        PyObject *event_processor = PyObject_GetAttrString(mpv, "process_event");
-        Py_DECREF(mpv);
+        PyObject *event_processor = PyObject_GetAttrString(clients[i]->pyclient, "process_event");
         Py_INCREF(args);
         PyObject_Call(event_processor, args, NULL);
         Py_DECREF(event_processor);
@@ -664,9 +671,7 @@ init_clients(PyObject *mpvmainloop, PyObject *args)
     mainThread = PyThreadState_Swap(NULL);
     for (size_t i = 0; i < ctx->script_count; i++) {
         PyThreadState_Swap(clients[i]->threadState);
-        PyObject *mpv = PyObject_GetAttrString(clients[i]->pyclient, "mpv");
-        PyObject_CallMethod(mpv, "flush", NULL);
-        Py_DECREF(mpv);
+        PyObject_CallMethod(clients[i]->pyclient, "flush", NULL);
     }
     PyThreadState_Swap(mainThread);
     Py_DECREF(ctx);
@@ -683,6 +688,8 @@ static PyMethodDef MpvMainLoop_methods[] = {
      PyDoc_STR("")},
     {"handle_log", (PyCFunction)mainloop_log_handle, METH_VARARGS,
      PyDoc_STR("handles log records emitted from python thread.")},
+    {"request_event", (PyCFunction)request_event_ml, METH_VARARGS,
+     PyDoc_STR("")},
     {NULL, NULL, 0, NULL}
 };
 
@@ -874,9 +881,12 @@ initialize_python(PyScriptCtx *ctx)
         }
 
         PyObject *mpv = PyObject_GetAttrString(client, "mpv");
+        Py_DECREF(client);
+        PyObject *index = PyLong_FromSize_t(i - discarded_client);
+        PyObject_SetAttrString(mpv, "index", index);
+        Py_DECREF(index);
         PyObject_CallMethod(mpv, "flush", NULL);
-        Py_DECREF(mpv);
-        pyMpv->pyclient = client;
+        pyMpv->pyclient = mpv;
 
         clients[i - discarded_client] = pyMpv;
         clients[i - discarded_client]->threadState = PyThreadState_Swap(NULL);
@@ -904,11 +914,9 @@ initialize_python(PyScriptCtx *ctx)
         mp_msg(ctx->log, mp_msg_find_level("error"), "%s.\n", "cound not set up context for the module mpvmainloop\n");
         return -1;
     };
-
-    PyObject *clnts = PyList_New(ctx->script_count);
+    PyObject *clnts = PyDict_New();
     for (size_t i = 0; i < ctx->script_count; i++) {
-        PyObject *name = PyUnicode_FromString(client_names[i]);
-        PyList_SetItem(clnts, i, name);
+        PyDict_SetItemString(clnts, client_names[i], clients[i]->pyclient);
     }
 
     talloc_free(client_names);

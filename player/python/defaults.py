@@ -57,6 +57,10 @@ class Mpv:
             args.append(duration)
         self.commandv("show-text", text)
 
+    @property
+    def name(self):
+        return client_name
+
     threads = True
 
     def read_script(self, filename):
@@ -162,7 +166,7 @@ class Mpv:
 
     def flush(self):
         self.debug(f"flushing {client_name}")
-        self.enable_client_message()
+        # self.enable_client_message()
         self.set_input_sections()
 
     next_bid = 1
@@ -200,6 +204,9 @@ class Mpv:
         registry.binds[name] = key_data
 
         return decorate
+
+    def has_binding(self):
+        return bool(registry.binds)
 
     def enable_client_message(self):
         if registry.binds:
