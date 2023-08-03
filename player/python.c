@@ -104,8 +104,8 @@ static PyObject *check_error(int res);
 * =====================
 * * Get a list of all python scripts.
 * * Initialize python in it's own thread, as a single client. (call Py_Initialize)
-* * Run scripts in sub interpreters. (This where the scripts are isolated as virtual clients)
-* * Run a event loop on the the mainThread created from Py_Initialize.
+* * Run scripts in sub interpreters. (This is where the scripts are isolated as virtual clients)
+* * Run an event loop on the the mainThread created from Py_Initialize.
 * * Delegate event actions to the sub interpreters.
 * * Destroy all sub interpreters on MPV_EVENT_SHUTDOWN
 * * Shutdown python. (call Py_Finalize)
@@ -260,28 +260,14 @@ mpv_extension_ok(PyObject *self, PyObject *args)
 // args: log level, varargs
 static PyObject *script_log(struct mp_log *log, PyObject *args)
 {
-    PyObject* list_obj;
-    if (!PyArg_ParseTuple(args, "O", &list_obj)) {
-        Py_RETURN_NONE;
-    }
-    int length = PyList_Size(list_obj);
+    PyObject* list_obj = PyTuple_GetItem(args, 0);
 
-    int msgl = mp_msg_find_level(PyUnicode_AsUTF8(PyList_GetItem(list_obj, 0)));
-
-    if(length>1) {
-        for (Py_ssize_t i = 1; i < length; i++) {
-            PyObject* str_obj = PyList_GetItem(list_obj, i);
-            if (!PyUnicode_Check(str_obj)) {
-                PyErr_SetString(PyExc_TypeError, "List must contain only strings");
-                Py_RETURN_NONE;
-            }
-            mp_msg(log, msgl, (i == 2 ? "%s" : " %s"), PyUnicode_AsUTF8(str_obj));
-        }
-        mp_msg(log, msgl, "\n");
-        Py_DECREF(list_obj);
-        Py_RETURN_NONE;
-    }
-    Py_DECREF(list_obj);
+    mp_msg(
+        log,
+        mp_msg_find_level(PyUnicode_AsUTF8(PyList_GetItem(list_obj, 0))),
+        PyUnicode_AsUTF8(PyList_GetItem(list_obj, 1)),
+        NULL
+    );
     Py_RETURN_NONE;
 }
 

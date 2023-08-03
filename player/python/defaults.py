@@ -30,26 +30,26 @@ class Mpv:
 
     MPV_EVENT_CLIENT_MESSAGE = 16
 
-    def log(self, level, *args):
+    def _log(self, level, *args):
         if not args:
             return
         msg = ' '.join([str(msg) for msg in args])
-        _mpv.handle_log([level, f"({client_name}) {msg}"])
+        _mpv.handle_log([level, f"({client_name}) {msg}\n"])
 
     def info(self, *args):
-        self.log("info", *args)
+        self._log("info", *args)
 
     def debug(self, *args):
-        self.log("debug", *args)
+        self._log("debug", *args)
 
     def warn(self, *args):
-        self.log("warn", *args)
+        self._log("warn", *args)
 
     def error(self, *a):
-        self.log("error", *a)
+        self._log("error", *a)
 
     def fatal(self, *a):
-        self.log("fatal", *a)
+        self._log("fatal", *a)
 
     def osd_message(self, text, duration=None):
         args = [text]

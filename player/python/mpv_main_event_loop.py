@@ -21,20 +21,25 @@ class MainLoop(object):
     MPV_EVENT_QUEUE_OVERFLOW = 24
     MPV_EVENT_HOOK = 25
 
+    def _log(self, level, *args):
+        if not args:
+            return
+        return mpvmainloop.handle_log([level, f' '.join([str(msg) for msg in args]) + "\n"])
+
     def info(self, *args):
-        mpvmainloop.handle_log(['info', ' '.join([str(msg) for msg in args])])
+        return self._log("info", *args)
 
     def debug(self, *args):
-        mpvmainloop.handle_log(['debug', ' '.join([str(msg) for msg in args])])
+        return self._log("debug", *args)
 
     def warn(self, *args):
-        mpvmainloop.handle_log(['warn', ' '.join([str(msg) for msg in args])])
+        return self._log("warn", *args)
 
     def error(self, *a):
-        mpvmainloop.handle_log(['error', ' '.join([str(msg) for msg in a])])
+        return self._log("error", *args)
 
     def fatal(self, *a):
-        mpvmainloop.handle_log(['fatal', ' '.join([str(msg) for msg in a])])
+        return self._log("fatal", *args)
 
     clients = {}
 
