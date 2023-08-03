@@ -260,14 +260,11 @@ mpv_extension_ok(PyObject *self, PyObject *args)
 // args: log level, varargs
 static PyObject *script_log(struct mp_log *log, PyObject *args)
 {
-    PyObject* list_obj = PyTuple_GetItem(args, 0);
+    char *lev, *msg;
 
-    mp_msg(
-        log,
-        mp_msg_find_level(PyUnicode_AsUTF8(PyList_GetItem(list_obj, 0))),
-        PyUnicode_AsUTF8(PyList_GetItem(list_obj, 1)),
-        NULL
-    );
+    PyArg_ParseTuple(args, "ss", &lev, &msg);
+
+    mp_msg(log, mp_msg_find_level(lev), msg, NULL);
     Py_RETURN_NONE;
 }
 

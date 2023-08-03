@@ -24,7 +24,7 @@ class MainLoop(object):
     def _log(self, level, *args):
         if not args:
             return
-        return mpvmainloop.handle_log([level, f' '.join([str(msg) for msg in args]) + "\n"])
+        return mpvmainloop.handle_log(level, f' '.join([str(msg) for msg in args]) + "\n")
 
     def info(self, *args):
         return self._log("info", *args)

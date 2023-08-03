@@ -34,7 +34,7 @@ class Mpv:
         if not args:
             return
         msg = ' '.join([str(msg) for msg in args])
-        _mpv.handle_log([level, f"({client_name}) {msg}\n"])
+        _mpv.handle_log(level, f"({client_name}) {msg}\n")
 
     def info(self, *args):
         self._log("info", *args)
