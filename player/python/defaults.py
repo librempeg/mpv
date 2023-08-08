@@ -30,6 +30,13 @@ class Mpv:
 
     MPV_EVENT_CLIENT_MESSAGE = 16
 
+    MPV_FORMAT_STRING = 1
+    MPV_FORMAT_OSD_STRING = 2
+    MPV_FORMAT_FLAG = 3
+    MPV_FORMAT_INT64 = 4
+    MPV_FORMAT_DOUBLE = 5
+    MPV_FORMAT_NODE = 6
+
     def _log(self, level, *args):
         if not args:
             return
@@ -113,11 +120,26 @@ class Mpv:
     def def_property(self, name):
         return _mpv.del_property(name)
 
-    def get_property(self, name):
-        return _mpv.get_property(name)
+    def get_property(self, property_name, mpv_format):
+        return _mpv.get_property(property_name, mpv_format)
 
     def get_property_string(self, name):
-        return _mpv.get_property_string(name)
+        return self.get_property(name, mpv.MPV_FORMAT_STRING)
+
+    def get_property_osd(self, name):
+        return self.get_property(name, mpv.MPV_FORMAT_OSD_STRING)
+
+    def get_property_bool(self, name):
+        return self.get_property(name, mpv.MPV_FORMAT_FLAG)
+
+    def get_property_int(self, name):
+        return self.get_property(name, mpv.MPV_FORMAT_INT64)
+
+    def get_property_float(self, name):
+        return self.get_property(name, mpv.MPV_FORMAT_DOUBLE)
+
+    def get_property_node(self, name):
+        return self.get_property(name, mpv.MPV_FORMAT_NODE)
 
     def mpv_input_define_section(self, name, location, contents, builtin, owner):
         self.debug(f"define_section args:", name, location, contents, builtin, owner)

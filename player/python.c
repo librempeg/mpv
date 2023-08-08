@@ -149,7 +149,7 @@ PyMpv_dealloc(PyMpvObject *self)
 static PyObject *
 setup(PyObject *self, PyObject *args)
 {
-    return Py_NewRef(Py_NotImplemented);
+    Py_RETURN_NONE;
 }
 
 
@@ -166,7 +166,8 @@ PyMpv_getattro(PyMpvObject *self, PyObject *name)
     if (self->pympv_attr != NULL) {
         PyObject *v = PyDict_GetItemWithError(self->pympv_attr, name);
         if (v != NULL) {
-            return Py_NewRef(v);
+            Py_INCREF(v);
+            return v;
         }
         else if (PyErr_Occurred()) {
             return NULL;
@@ -245,7 +246,7 @@ mpvmainloop_wait_event(PyObject *mpvmainloop, PyObject *args)
         PyTuple_SetItem(ret, 1, data);
         return ret;
     }
-    PyTuple_SetItem(ret, 1, Py_NewRef(Py_None));
+    PyTuple_SetItem(ret, 1, Py_None);
     return ret;
 }
 
@@ -253,7 +254,7 @@ mpvmainloop_wait_event(PyObject *mpvmainloop, PyObject *args)
 static PyObject *
 mpv_extension_ok(PyObject *self, PyObject *args)
 {
-    return Py_NewRef(Py_True);
+    Py_RETURN_TRUE;
 }
 
 
@@ -451,45 +452,49 @@ del_property(PyObject* mpv, PyObject* args)
     return check_error(res);
 }
 
-
+/**
+ * @param args tuple
+ *             :param str property_name:
+ *             :param int mpv_format:
+ */
 static PyObject *
 get_property(PyObject* mpv, PyObject* args)
 {
+    const char *name;
+    mpv_format format;
+    PyArg_ParseTuple(args, "si", &name, &format);
+
+    if (format == MPV_FORMAT_NONE) {
+        Py_RETURN_NONE;
+    }
+
     PyMpvObject *ctx = get_client_context(mpv);
 
-    const char *name;
-
-    if (!PyArg_ParseTuple(args, "s", &name))
-        return NULL;
-
-    mpv_node *node = NULL;
-    int err = mpv_get_property(ctx->client, name, MPV_FORMAT_NODE, node);
+    void *out;
+    int err = mpv_get_property(ctx->client, name, format, &out);
     Py_DECREF(ctx);
     if (err >= 0) {
-        return deconstructnode(node);
+        switch (format) {
+            case MPV_FORMAT_STRING:
+            case MPV_FORMAT_OSD_STRING:
+                return PyUnicode_DecodeFSDefault(out);
+            case MPV_FORMAT_FLAG:
+                if (out == 0) {
+                    Py_RETURN_FALSE;
+                } else {
+                    Py_RETURN_TRUE;
+                }
+            case MPV_FORMAT_INT64:
+                return PyLong_FromLong(*(int64_t *)out);
+            case MPV_FORMAT_DOUBLE:
+                return PyFloat_FromDouble(*(double *)out);
+            case MPV_FORMAT_NODE:
+                return deconstructnode((mpv_node *)out);
+        }
+        // TODO: raise Exception
+        Py_RETURN_NONE;
     }
     return check_error(err);
-}
-
-static PyObject *
-get_property_string(PyObject *mpv, PyObject *args)
-{
-    PyMpvObject *ctx = get_client_context(mpv);
-
-    const char *name;
-
-    if (!PyArg_ParseTuple(args, "s", &name))
-        return NULL;
-
-    char *prop = mpv_get_property_string(ctx->client, name);
-    Py_DECREF(ctx);
-    return PyUnicode_DecodeFSDefault(prop);
-}
-
-static PyObject *
-get_property_osd(PyObject *mpv, PyObject *args)
-{
-    Py_RETURN_NONE;
 }
 
 static PyObject *
@@ -560,8 +565,6 @@ static PyMethodDef Mpv_methods[] = {
     {"del_property", (PyCFunction)del_property, METH_VARARGS,
      PyDoc_STR("")},
     {"get_property", (PyCFunction)get_property, METH_VARARGS,
-     PyDoc_STR("")},
-    {"get_property_string", (PyCFunction)get_property_string, METH_VARARGS,
      PyDoc_STR("")},
     {"observe_property", (PyCFunction)observe_property, METH_VARARGS,
      PyDoc_STR("")},
