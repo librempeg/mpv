@@ -741,15 +741,16 @@ load_script(char *script_name, PyObject *defaults, char *client_name)
 {
     PyObject *mpv = PyObject_GetAttrString(defaults, "mpv");
 
-    char *string;
     char *pathname;
-    PyObject *args = PyObject_CallMethod(mpv, "read_script", "s", script_name);
-    PyArg_ParseTuple(args, "ss", &pathname, &string);
-
+    PyObject *args = PyObject_CallMethod(mpv, "compile_script", "s", script_name);
+    if (args == NULL) {
+        return NULL;
+    }
+    PyObject *client = PyTuple_GetItem(args, 1);
+    PyArg_Parse(PyTuple_GetItem(args, 0), "s", &pathname);
+    Py_INCREF(client);
     Py_DECREF(args);
     Py_DECREF(mpv);
-
-    PyObject *client = Py_CompileString(string, client_name, Py_file_input);
     if (client == NULL) {
         return NULL;
     }

@@ -77,6 +77,10 @@ class Mpv:
         with file_path.open("r") as f:
             return str(file_path), f.read()
 
+    def compile_script(self, filename):
+        file_path, source = self.read_script(filename)
+        return file_path, compile(source, file_path, "exec")
+
     def extension_ok(self) -> bool:
         return _mpv.extension_ok()
 
