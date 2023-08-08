@@ -121,6 +121,9 @@ class Mpv:
         return _mpv.del_property(name)
 
     def get_property(self, property_name, mpv_format):
+        if not (type(property_name) == str and mpv_format in range(1, 7)):
+            self.error("TODO: have a pointer to doc string")
+            return
         return _mpv.get_property(property_name, mpv_format)
 
     def get_property_string(self, name):

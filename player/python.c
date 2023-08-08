@@ -477,7 +477,7 @@ get_property(PyObject* mpv, PyObject* args)
         switch (format) {
             case MPV_FORMAT_STRING:
             case MPV_FORMAT_OSD_STRING:
-                return PyUnicode_DecodeFSDefault(out);
+                return PyUnicode_DecodeFSDefault((char *)out);
             case MPV_FORMAT_FLAG:
                 if (out == 0) {
                     Py_RETURN_FALSE;
