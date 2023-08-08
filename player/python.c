@@ -760,6 +760,7 @@ load_script(char *script_name, PyObject *defaults, char *client_name)
 static void
 end_interpreter(PyMpvObject *client_ctx)
 {
+    PyErr_PrintEx(0);
     Py_EndInterpreter(client_ctx->threadState);
     talloc_free(client_ctx->ta_ctx);
     PyThreadState_Swap(NULL);
@@ -783,11 +784,10 @@ initialize_python(PyScriptCtx *ctx)
 
     Py_Initialize();
 
-    // Keep an extra dummy interpreter to repopulate the the global interpreter
-    // in case we through away the last interpreter which seem to erase some
-    // essential stuff from the main thread
+    PyMpvObject *pyMpv;
+
     for (size_t i = 0; i < ctx->script_count; i++) {
-        PyMpvObject *pyMpv = PyObject_New(PyMpvObject, &PyMpv_Type);
+        pyMpv = PyObject_New(PyMpvObject, &PyMpv_Type);
         pyMpv->log = ctx->log;
         pyMpv->client = ctx->client;
         pyMpv->mpctx = ctx->mpctx;
@@ -796,9 +796,15 @@ initialize_python(PyScriptCtx *ctx)
         clients[i] = pyMpv;
     }
 
+    // Keep an extra dummy interpreter to repopulate the the global interpreter
+    // in case we through away the last interpreter which seem to erase some
+    // essential stuff from the main thread
+    pyMpv = PyObject_New(PyMpvObject, &PyMpv_Type);
+    pyMpv->threadState = Py_NewInterpreter();
+    clients[ctx->script_count] = pyMpv;
+
     size_t discarded_client = 0;
 
-    PyMpvObject *pyMpv;
     mainThread = PyThreadState_Swap(NULL);
 
     for (size_t i = 0; i < ctx->script_count; i++) {
@@ -877,14 +883,15 @@ initialize_python(PyScriptCtx *ctx)
     }
     talloc_free(ctx->scripts);
 
+    pyMpv = clients[ctx->script_count];
+    PyThreadState_Swap(pyMpv->threadState);
+    PyThreadState_Swap(mainThread);
+
     if (ctx->script_count == discarded_client) {
         mp_msg(ctx->log, mp_msg_find_level("warn"), "no active client found.\n");
-        talloc_free(clients);
         talloc_free(client_names);
         return -1;
     }
-
-    PyThreadState_Swap(mainThread);
 
     if (discarded_client > 0) {
         ctx->script_count = ctx->script_count - discarded_client;
@@ -917,8 +924,9 @@ initialize_python(PyScriptCtx *ctx)
 // Main Entrypoint (We want only one call here.)
 static int s_load_python(struct mp_script_args *args)
 {
+    int ret = 0;
     if (args->script_count == 0)
-        return 0;
+        return ret;
     PyScriptCtx *ctx = PyObject_New(PyScriptCtx, &PyScriptCtx_Type);
     ctx->client = args->client;
     ctx->mpctx = args->mpctx;
@@ -927,16 +935,18 @@ static int s_load_python(struct mp_script_args *args)
     ctx->script_count = args->script_count;
     ctx->ta_ctx = talloc_new(NULL);
 
-    if (initialize_python(ctx) < 0) {
-        return -1;
-    };
+    ret = initialize_python(ctx);
 
-    for (size_t i = 0; i < ctx->script_count; i++) {
-        talloc_free(clients[i]->ta_ctx);
+    if (ret >= 0) {
+        for (size_t i = 0; i < ctx->script_count; i++) {
+            talloc_free(clients[i]->ta_ctx);
+        }
     }
 
+    // talloc_free(ctx->ta_ctx);
     talloc_free(clients);
 
+    PyErr_PrintEx(0);
     Py_Finalize(); // closes the sub interpreters, no need for doing it manually
     return 0;
 }
