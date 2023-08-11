@@ -2,6 +2,13 @@ import threading
 import mpvmainloop
 
 
+class State(object):
+    pause = False
+
+
+state = State()
+
+
 class MainLoop(object):
     MPV_EVENT_NONE = 0
     MPV_EVENT_SHUTDOWN = 1
@@ -43,7 +50,7 @@ class MainLoop(object):
 
     clients = {}
 
-    def __init__(self, clients):
+    def __init__(self, clients=None):
         self.clients = clients
 
     def get_client_index(self, client_name):
@@ -62,6 +69,10 @@ class MainLoop(object):
             self.info("shutting down python")
             return True
         elif event_id == self.MPV_EVENT_NONE:
+            return False
+        elif event_id == self.MPV_EVENT_PROPERTY_CHANGE:
+            self.debug(data)
+            setattr(state, *data)
             return False
         else:
             mpvmainloop.notify_clients(event_id, data)
@@ -85,12 +96,21 @@ class MainLoop(object):
         else:
             self.debug("failed to enable client-message")
 
+    def observe_property(self, property_name, mpv_format, reply_userdata=0):
+        return mpvmainloop.observe_property(property_name, mpv_format, reply_userdata)
+
     def run(self):
+        self.clients = mpvmainloop.clients
+        # cm = False
         for client in self.clients.values():
+            # if not cm and client.has_binding():
             if client.has_binding():
                 self.enable_client_message()
-                break
+                break;
+            #     cm = True
+            # for property_name, meta in client.observe_properties.items():
+            #     self.observe_property(property_name.split("___")[1], meta['mpv_format'], meta['reply_userdata'])
         self.wait_events()
 
 
-ml = MainLoop(mpvmainloop.clients)
+ml = MainLoop()

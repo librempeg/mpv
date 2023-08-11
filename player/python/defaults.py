@@ -37,6 +37,8 @@ class Mpv:
     MPV_FORMAT_DOUBLE = 5
     MPV_FORMAT_NODE = 6
 
+    observe_properties = {}
+
     def _log(self, level, *args):
         if not args:
             return
@@ -87,10 +89,15 @@ class Mpv:
     def process_event(self, event_id, data):
         self.debug(f"received event: {event_id}, {data}")
         if event_id == self.MPV_EVENT_CLIENT_MESSAGE:
+            c_name, cb_name = data[1].split('___')
+            if c_name != self.name:
+                return
             if data[2][0] == 'u':
-                cb_name = data[1].split('___')[1]
                 self.debug(f"calling callback {cb_name}")
-                registry.script_message[cb_name]()
+                try:
+                    registry.script_message[cb_name]()
+                except:
+                    self.printEx(0)
                 self.debug(f"invoked {cb_name}")
 
     def command_string(self, name):
@@ -114,14 +121,39 @@ class Mpv:
     def enable_messages(self, level):
         return _mpv.enable_messages(level)
 
-    def set_property(self, name, node):
+    def observe_property(self, property_name, mpv_format, reply_userdata=0):
+        self.observe_properties[self.name + "___" + property_name] = {
+            "reply_userdata": reply_userdata, "mpv_format": mpv_format}
+
+    def _set_property(self, property_name, mpv_format, data):
         """
         :param str name: name of the property.
-        :param typing.Any node: can be str, int, float, None, bool, list and dict. Internally converted into an mpv_node.
-        """
-        return _mpv.set_property(name, node)
 
-    def def_property(self, name):
+        """
+        if not (type(property_name) == str and mpv_format in range(1, 7)):
+            self.error("TODO: have a pointer to doc string")
+            return
+        return _mpv.set_property(property_name, mpv_format, data)
+
+    def set_property_string(self, name, data):
+        return self._set_property(name, mpv.MPV_FORMAT_STRING, str(data))
+
+    def set_property_osd(self, name, data):
+        return self._set_property(name, mpv.MPV_FORMAT_OSD_STRING, str(data))
+
+    def set_property_bool(self, name, data):
+        return self._set_property(name, mpv.MPV_FORMAT_FLAG, 1 if bool(data) else 0)
+
+    def set_property_int(self, name, data):
+        return self._set_property(name, mpv.MPV_FORMAT_INT64, int(data))
+
+    def set_property_float(self, name, data):
+        return self._set_property(name, mpv.MPV_FORMAT_DOUBLE, float(data))
+
+    def set_property_node(self, name, data):
+        return self._set_property(name, mpv.MPV_FORMAT_NODE, data)
+
+    def del_property(self, name):
         return _mpv.del_property(name)
 
     def get_property(self, property_name, mpv_format):
@@ -137,7 +169,7 @@ class Mpv:
         return self.get_property(name, mpv.MPV_FORMAT_OSD_STRING)
 
     def get_property_bool(self, name):
-        return self.get_property(name, mpv.MPV_FORMAT_FLAG)
+        return bool(self.get_property(name, mpv.MPV_FORMAT_FLAG))
 
     def get_property_int(self, name):
         return self.get_property(name, mpv.MPV_FORMAT_INT64)
@@ -179,7 +211,7 @@ class Mpv:
                 if binding['builtin'] and binding.get('input')]))
         if builtin_binds:
             name = f"py_{client_name}_kbs_builtin"
-            self.mpv_input_define_section(name, location, builtin_binds, True, client_name)
+            self.mpv_input_define_section(name, location, "\n" + builtin_binds, True, client_name)
             self.mpv_input_enable_section(name, self.MP_INPUT_ON_TOP)
 
         reg_binds = "\n".join(sorted(
@@ -187,7 +219,7 @@ class Mpv:
                 if not binding['builtin'] and binding.get('input')]))
         if reg_binds:
             name = f"py_{client_name}_kbs"
-            self.mpv_input_define_section(name, location, reg_binds, False, client_name)
+            self.mpv_input_define_section(name, location, "\n" + reg_binds, False, client_name)
             self.mpv_input_enable_section(name, self.MP_INPUT_ON_TOP)
 
     def set_input_sections(self):
