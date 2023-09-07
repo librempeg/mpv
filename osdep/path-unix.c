@@ -40,25 +40,25 @@ static void path_init(void)
     char *xdg_state = getenv("XDG_STATE_HOME");
 
     bool err = false;
-    if (xdg_config && xdg_config[0]) {
+    if (xdg_config && xdg_config[0] == '/') {
         err = err || MKPATH(mpv_home, "%s/mpv", xdg_config);
-    } else if (home && home[0]) {
+    } else if (home && home[0] == '/') {
         err = err || MKPATH(mpv_home, "%s/.config/mpv", home);
     }
 
     // Maintain compatibility with old ~/.mpv
-    if (home && home[0])
+    if (home && home[0] == '/')
         err = err || MKPATH(old_home, "%s/.mpv", home);
 
-    if (xdg_cache && xdg_cache[0]) {
+    if (xdg_cache && xdg_cache[0] == '/') {
         err = err || MKPATH(mpv_cache, "%s/mpv", xdg_cache);
-    } else if (home && home[0]) {
+    } else if (home && home[0] == '/') {
         err = err || MKPATH(mpv_cache, "%s/.cache/mpv", home);
     }
 
-    if (xdg_state && xdg_state[0]) {
+    if (xdg_state && xdg_state[0] == '/') {
         err = err || MKPATH(mpv_state, "%s/mpv", xdg_state);
-    } else if (home && home[0]) {
+    } else if (home && home[0] == '/') {
         err = err || MKPATH(mpv_state, "%s/.local/state/mpv", home);
     }
 
