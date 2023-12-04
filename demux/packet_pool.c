@@ -19,19 +19,22 @@
 
 #include "common/global.h"
 #include "osdep/threads.h"
+#include "player/core.h"
 #include "packet.h"
 
 struct demux_packet_pool {
     mp_mutex lock;
     struct demux_packet *packets;
+    struct MPContext *parent;
 };
 
-void demux_packet_pool_init(struct mpv_global *global)
+void demux_packet_pool_init(struct mpv_global *global, struct MPContext *parent)
 {
     struct demux_packet_pool *pool = talloc(global, struct demux_packet_pool);
     talloc_set_destructor(pool, demux_packet_pool_uninit);
     mp_mutex_init(&pool->lock);
     pool->packets = NULL;
+    pool->parent = parent;
 
     assert(!global->packet_pool);
     global->packet_pool = pool;
@@ -40,7 +43,8 @@ void demux_packet_pool_init(struct mpv_global *global)
 void demux_packet_pool_uninit(void *p)
 {
     struct demux_packet_pool *pool = p;
-    demux_packet_pool_clear(pool);
+    if (!pool->parent->quit_fast)
+        demux_packet_pool_clear(pool);
     mp_mutex_destroy(&pool->lock);
 }
 
