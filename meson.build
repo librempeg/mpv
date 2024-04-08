@@ -399,7 +399,8 @@ cocoa = dependency('appleframeworks', modules: ['Cocoa', 'IOKit', 'QuartzCore'],
 features += {'cocoa': cocoa.found()}
 if features['cocoa']
     dependencies += cocoa
-    sources += files('osdep/language-mac.c',
+    sources += files('osdep/clipboard-mac.m',
+                     'osdep/language-mac.c',
                      'osdep/path-mac.m',
                      'osdep/utils-mac.c',
                      'osdep/mac/app_bridge.m')
@@ -521,6 +522,10 @@ if not posix and not features['win32-desktop']
     subprocess_source = files('osdep/subprocess-dummy.c')
     sources += files('input/ipc-dummy.c',
                      'osdep/terminal-dummy.c')
+endif
+
+if not features['cocoa']
+    sources += files('osdep/clipboard-dummy.c')
 endif
 
 features += {'glob-posix': cc.has_function('glob', prefix: '#include <glob.h>')}
