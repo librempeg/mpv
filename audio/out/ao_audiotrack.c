@@ -815,6 +815,26 @@ static void start(struct ao *ao)
     mp_cond_signal(&p->wakeup);
 }
 
+static bool set_pause(struct ao *ao, bool paused)
+{
+    struct priv *p = ao->priv;
+    if (!p->audiotrack) {
+        MP_ERR(ao, "AudioTrack does not exist to pause!\n");
+        return false;
+    }
+
+    JNIEnv *env = MP_JNI_GET_ENV(ao);
+    if (paused) {
+        MP_JNI_CALL_VOID(p->audiotrack, AudioTrack.pause);
+    } else {
+        MP_JNI_CALL_VOID(p->audiotrack, AudioTrack.play);
+        mp_cond_signal(&p->wakeup);
+    }
+    MP_JNI_EXCEPTION_LOG(ao);
+
+    return true;
+}
+
 #define OPT_BASE_STRUCT struct priv
 
 const struct ao_driver audio_out_audiotrack = {
@@ -824,6 +844,7 @@ const struct ao_driver audio_out_audiotrack = {
     .uninit    = uninit,
     .reset     = stop,
     .start     = start,
+    .set_pause = set_pause,
     .priv_size = sizeof(struct priv),
     .priv_defaults = &(const OPT_BASE_STRUCT) {
         .cfg_pcm_float = 1,
