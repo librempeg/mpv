@@ -563,7 +563,6 @@ static MP_THREAD_VOID ao_thread(void *arg)
         if (state == AudioTrack.PLAYSTATE_PLAYING) {
             int read_samples = p->chunksize / ao->sstride;
             int64_t ts = mp_time_ns();
-            ts += MP_TIME_S_TO_NS(read_samples / (double)(ao->samplerate));
             ts += MP_TIME_S_TO_NS(AudioTrack_getLatency(ao));
             bool eof;
             int samples = ao_read_data(ao, &p->chunk, read_samples, ts, &eof, false, false);
