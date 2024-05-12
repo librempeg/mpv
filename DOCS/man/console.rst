@@ -131,15 +131,6 @@ documentation.
 Configurable Options
 ~~~~~~~~~~~~~~~~~~~~
 
-``scale``
-    Default: 1
-
-    All drawing is scaled by this value, including the text borders and the
-    cursor.
-
-    If the VO backend in use has HiDPI scale reporting implemented, the option
-    value is scaled with the reported HiDPI scale.
-
 ``font``
     Default: unset (picks a hardcoded font depending on detected platform)
 
@@ -150,13 +141,14 @@ Configurable Options
 ``font_size``
     Default: 16
 
-    Set the font size used for the REPL and the console. This will be
-    multiplied by "scale".
+    Set the font size. This scales with the window height when
+    ``--osd-scale-by-window`` is enabled.
 
 ``border_size``
     Default: 1
 
-    Set the font border size used for the REPL and the console.
+    Set the font border size. This scales with the window height when
+    ``--osd-scale-by-window`` is enabled.
 
 ``case_sensitive``
     Default: no on Windows, yes on other platforms.

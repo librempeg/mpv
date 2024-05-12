@@ -17,14 +17,10 @@ local assdraw = require 'mp.assdraw'
 
 -- Default options
 local opts = {
-    -- All drawing is scaled by this value, including the text borders and the
-    -- cursor. Change it if you have a high-DPI display.
-    scale = 1,
     -- Set the font used for the REPL and the console.
     -- This has to be a monospaced font.
     font = "",
-    -- Set the font size used for the REPL and the console. This will be
-    -- multiplied by "scale".
+    -- Set the font size used for the REPL and the console.
     font_size = 16,
     border_size = 1,
     case_sensitive = true,
@@ -256,6 +252,21 @@ local function ass_escape(str)
     return mp.command_native({'escape-ass', str})
 end
 
+local function get_scaled_osd_dimensions()
+    local w, h, aspect = mp.get_osd_size()
+
+    if mp.get_property_native('osd-scale-by-window') then
+        h = 720
+        w = 720 * aspect
+    end
+
+    local scale = mp.get_property_native('display-hidpi-scale', 1)
+    w = w / scale
+    h = h / scale
+
+    return w, h
+end
+
 local function calculate_max_log_lines()
     if not mp.get_property_native('vo-configured') then
         -- Subtract 1 for the input line and for each line in the status line.
@@ -264,9 +275,7 @@ local function calculate_max_log_lines()
                select(2, mp.get_property('term-status-msg'):gsub('\\n', ''))
     end
 
-    return math.floor(mp.get_property_native('osd-height')
-                      / mp.get_property_native('display-hidpi-scale', 1)
-                      / opts.scale
+    return math.floor(select(2, get_scaled_osd_dimensions())
                       * (1 - global_margins.t - global_margins.b)
                       / opts.font_size
                       -- Subtract 1 for the input line and 1 for the newline
@@ -509,22 +518,14 @@ local function update()
         return
     end
 
-    local dpi_scale = mp.get_property_native("display-hidpi-scale", 1.0)
-
-    dpi_scale = dpi_scale * opts.scale
-
-    local screenx, screeny = mp.get_osd_size()
-    screenx = screenx / dpi_scale
-    screeny = screeny / dpi_scale
-
-    local bottom_left_margin = 6
-
     -- Clear the OSD if the REPL is not active
     if not repl_active then
-        mp.set_osd_ass(screenx, screeny, '')
+        mp.set_osd_ass(0, 0, '')
         return
     end
 
+    local screenx, screeny = get_scaled_osd_dimensions()
+    local bottom_left_margin = 6
     local coordinate_top = math.floor(global_margins.t * screeny + 0.5)
     local clipping_coordinates = '0,' .. coordinate_top .. ',' ..
                                  screenx .. ',' .. screeny
