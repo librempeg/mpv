@@ -123,6 +123,10 @@ static int read_buffer(struct ao *ao, void **data, int samples, bool *eof,
 {
     struct buffer_state *p = ao->buffer_state;
     int pos = 0;
+
+    if (eof == NULL) {
+        eof = &(bool){0};
+    }
     *eof = false;
 
     while (p->playing && !p->paused && pos < samples) {
@@ -178,15 +182,22 @@ static int read_buffer(struct ao *ao, void **data, int samples, bool *eof,
 }
 
 static int ao_read_data_locked(struct ao *ao, void **data, int samples,
-                               int64_t out_time_ns, bool pad_silence)
+                               int64_t start_time_ns, bool *eof, bool pad_silence)
 {
     struct buffer_state *p = ao->buffer_state;
     assert(!ao->driver->write);
 
-    int pos = read_buffer(ao, data, samples, &(bool){0}, pad_silence);
+    int pos = read_buffer(ao, data, samples, eof, pad_silence);
 
-    if (pos > 0)
-        p->end_time_ns = out_time_ns;
+    if (pos > 0) {
+        p->end_time_ns = start_time_ns
+            + MP_TIME_S_TO_NS(pad_silence
+                ? samples   // If pad_silence is true, the ao is expecting a fixed number of samples.
+                : (data     // If pad_silence is false, the ao can handle partial data.
+                    ? pos
+                    : mp_aframe_get_size(p->pending) // If data is not set, the ao is reading frames directly.
+                )) / ao->samplerate;
+    }
 
     if (pos < samples && p->playing && !p->paused) {
         p->playing = false;
@@ -204,47 +215,61 @@ static int ao_read_data_locked(struct ao *ao, void **data, int samples,
 // rest of the user-provided buffer with silence.
 // This basically assumes that the audio device doesn't care about underruns.
 // If this is called in paused mode, it will always return 0.
-// The caller should set out_time_ns to the expected delay until the last sample
+// The caller should set start_time_ns to the expected delay until the first sample
 // reaches the speakers, in nanoseconds, using mp_time_ns() as reference.
-int ao_read_data(struct ao *ao, void **data, int samples, int64_t out_time_ns)
+int ao_read_data(struct ao *ao, void **data, int samples, int64_t start_time_ns, bool *eof, bool pad_silence, bool blocking)
 {
     struct buffer_state *p = ao->buffer_state;
 
-    mp_mutex_lock(&p->lock);
+    if (blocking) {
+        mp_mutex_lock(&p->lock);
+    } else if (mp_mutex_trylock(&p->lock)) {
+        return 0;
+    }
 
-    int pos = ao_read_data_locked(ao, data, samples, out_time_ns, true);
+    int pos = ao_read_data_locked(ao, data, samples, start_time_ns, eof, pad_silence);
 
     mp_mutex_unlock(&p->lock);
 
     return pos;
 }
 
-// Like ao_read_data() but does not block and also may return partial data.
-// Callers have to check the return value.
-int ao_read_data_nonblocking(struct ao *ao, void **data, int samples, int64_t out_time_ns)
+// Read a audio frame. Returns the audio frame.
+// If there is not data (buffer underrun or EOF), NULL is returned.
+// THE CALLER IS RESPONSIBLE FOR DEALLOCATING THE RETURNED FRAME.
+struct mp_aframe *ao_read_frame(struct ao *ao, int64_t start_time_ns, bool *eof, bool blocking)
 {
     struct buffer_state *p = ao->buffer_state;
 
-    if (mp_mutex_trylock(&p->lock))
-            return 0;
+    if (blocking) {
+        mp_mutex_lock(&p->lock);
+    } else if (mp_mutex_trylock(&p->lock)) {
+        return 0;
+    }
 
-    int pos = ao_read_data_locked(ao, data, samples, out_time_ns, false);
+    if (!p->pending) {
+        (void)ao_read_data_locked(ao, NULL, 1, start_time_ns, eof, false);
+    } else if (eof) {
+        *eof = false;
+    }
+    struct mp_aframe *ret = p->pending;
+    p->pending = NULL;
 
     mp_mutex_unlock(&p->lock);
 
-    return pos;
+    return ret;
 }
 
 // Same as ao_read_data(), but convert data according to *fmt.
 // fmt->src_fmt and fmt->channels must be the same as the AO parameters.
 int ao_read_data_converted(struct ao *ao, struct ao_convert_fmt *fmt,
-                           void **data, int samples, int64_t out_time_ns)
+                           void **data, int samples, int64_t start_time_ns)
 {
     struct buffer_state *p = ao->buffer_state;
     void *ndata[MP_NUM_CHANNELS] = {0};
 
     if (!ao_need_conversion(fmt))
-        return ao_read_data(ao, data, samples, out_time_ns);
+        return ao_read_data(ao, data, samples, start_time_ns, NULL, true, true);
 
     assert(ao->format == fmt->src_fmt);
     assert(ao->channels.num == fmt->channels);
@@ -264,13 +289,23 @@ int ao_read_data_converted(struct ao *ao, struct ao_convert_fmt *fmt,
     for (int n = 0; n < planes; n++)
         ndata[n] = p->convert_buffer + n * src_plane_size;
 
-    int res = ao_read_data(ao, ndata, samples, out_time_ns);
+    int res = ao_read_data(ao, ndata, samples, start_time_ns, NULL, true, true);
 
     ao_convert_inplace(fmt, ndata, samples);
     for (int n = 0; n < planes; n++)
         memcpy(data[n], ndata[n], dst_plane_size);
 
     return res;
+}
+
+// Called by pull-based AO to indicate the AO has stopped requesting more data,
+// usually when EOF is got from ao_read_data().
+// After this function is called, the core will call ao->driver->start() again
+// when more audio data after EOF arrives.
+void ao_stop_streaming(struct ao *ao)
+{
+    struct buffer_state *p = ao->buffer_state;
+    p->streaming = false;
 }
 
 int ao_control(struct ao *ao, enum aocontrol cmd, void *arg)

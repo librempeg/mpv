@@ -178,10 +178,9 @@ static OSStatus render_cb_compressed(
     }
 
     int64_t end = mp_time_ns();
-    end += p->hw_latency_ns + ca_get_latency(ts)
-        + ca_frames_to_ns(ao, pseudo_frames);
+    end += p->hw_latency_ns + ca_get_latency(ts);
 
-    ao_read_data(ao, &buf.mData, pseudo_frames, end);
+    ao_read_data(ao, &buf.mData, pseudo_frames, end, NULL, true, true);
 
     if (p->spdif_hack)
         bad_hack_mygodwhy(buf.mData, pseudo_frames * ao->channels.num);

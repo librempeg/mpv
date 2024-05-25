@@ -552,6 +552,7 @@ static MP_THREAD_VOID ao_thread(void *arg)
     struct ao *ao = arg;
     struct priv *p = ao->priv;
     JNIEnv *env = MP_JNI_GET_ENV(ao);
+    bool after_eof = false;
     mp_thread_set_name("ao/audiotrack");
     mp_mutex_lock(&p->lock);
     while (!p->thread_terminate) {
@@ -562,23 +563,34 @@ static MP_THREAD_VOID ao_thread(void *arg)
         if (state == AudioTrack.PLAYSTATE_PLAYING) {
             int read_samples = p->chunksize / ao->sstride;
             int64_t ts = mp_time_ns();
-            ts += MP_TIME_S_TO_NS(read_samples / (double)(ao->samplerate));
             ts += MP_TIME_S_TO_NS(AudioTrack_getLatency(ao));
-            int samples = ao_read_data_nonblocking(ao, &p->chunk, read_samples, ts);
-            int ret = AudioTrack_write(ao, samples * ao->sstride);
-            if (ret >= 0) {
-                p->written_frames += ret / ao->sstride;
-            } else if (ret == AudioManager.ERROR_DEAD_OBJECT) {
-                MP_WARN(ao, "AudioTrack.write failed with ERROR_DEAD_OBJECT. Recreating AudioTrack...\n");
-                if (AudioTrack_Recreate(ao) < 0) {
-                    MP_ERR(ao, "AudioTrack_Recreate failed\n");
+            bool eof;
+            int samples = ao_read_data(ao, &p->chunk, read_samples, ts, &eof, false, false);
+            if (samples) {
+                after_eof = false;
+                int ret = AudioTrack_write(ao, samples * ao->sstride);
+                if (ret >= 0) {
+                    p->written_frames += ret / ao->sstride;
+                } else if (ret == AudioManager.ERROR_DEAD_OBJECT) {
+                    MP_WARN(ao, "AudioTrack.write failed with ERROR_DEAD_OBJECT. Recreating AudioTrack...\n");
+                    if (AudioTrack_Recreate(ao) < 0) {
+                        MP_ERR(ao, "AudioTrack_Recreate failed\n");
+                    }
+                } else {
+                    MP_ERR(ao, "AudioTrack.write failed with %d\n", ret);
                 }
             } else {
-                MP_ERR(ao, "AudioTrack.write failed with %d\n", ret);
+                if (eof) {
+                    after_eof = true;
+                    ao_stop_streaming(ao);
+                }
+                if (!after_eof) {
+                    continue;
+                }
             }
-        } else {
-            mp_cond_timedwait(&p->wakeup, &p->lock, MP_TIME_MS_TO_NS(300));
         }
+
+        mp_cond_timedwait(&p->wakeup, &p->lock, MP_TIME_MS_TO_NS(300));
     }
     mp_mutex_unlock(&p->lock);
     MP_THREAD_RETURN();
@@ -815,6 +827,26 @@ static void start(struct ao *ao)
     mp_cond_signal(&p->wakeup);
 }
 
+static bool set_pause(struct ao *ao, bool paused)
+{
+    struct priv *p = ao->priv;
+    if (!p->audiotrack) {
+        MP_ERR(ao, "AudioTrack does not exist to pause!\n");
+        return false;
+    }
+
+    JNIEnv *env = MP_JNI_GET_ENV(ao);
+    if (paused) {
+        MP_JNI_CALL_VOID(p->audiotrack, AudioTrack.pause);
+    } else {
+        MP_JNI_CALL_VOID(p->audiotrack, AudioTrack.play);
+        mp_cond_signal(&p->wakeup);
+    }
+    MP_JNI_EXCEPTION_LOG(ao);
+
+    return true;
+}
+
 #define OPT_BASE_STRUCT struct priv
 
 const struct ao_driver audio_out_audiotrack = {
@@ -824,6 +856,7 @@ const struct ao_driver audio_out_audiotrack = {
     .uninit    = uninit,
     .reset     = stop,
     .start     = start,
+    .set_pause = set_pause,
     .priv_size = sizeof(struct priv),
     .priv_defaults = &(const OPT_BASE_STRUCT) {
         .cfg_pcm_float = 1,

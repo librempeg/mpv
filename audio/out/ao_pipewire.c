@@ -198,7 +198,6 @@ static void on_process(void *userdata)
         time.rate.num = 1;
 
     int64_t end_time = mp_time_ns();
-    end_time += MP_TIME_S_TO_NS(nframes) / ao->samplerate;
     end_time += MP_TIME_S_TO_NS(time.delay) * time.rate.num / time.rate.denom;
     end_time += MP_TIME_S_TO_NS(time.queued) / ao->samplerate;
 #if PW_CHECK_VERSION(0, 3, 50)
@@ -206,7 +205,8 @@ static void on_process(void *userdata)
 #endif
     end_time -= pw_stream_get_nsec(p->stream) - time.now;
 
-    int samples = ao_read_data_nonblocking(ao, data, nframes, end_time);
+    bool eof;
+    int samples = ao_read_data(ao, data, nframes, end_time, &eof, false, false);
     b->size = samples;
 
     for (int i = 0; i < buf->n_datas; i++) {
@@ -216,6 +216,11 @@ static void on_process(void *userdata)
     }
 
     pw_stream_queue_buffer(p->stream, b);
+
+    if (eof) {
+        pw_stream_flush(p->stream, true);
+        ao_stop_streaming(ao);
+    }
 
     MP_TRACE(ao, "queued %d of %d samples\n", samples, nframes);
 }
