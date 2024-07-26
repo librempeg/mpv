@@ -41,6 +41,7 @@
 #include "options/m_config_frontend.h"
 #include "options/m_property.h"
 #include "options/options.h"
+#include "osdep/clipboard.h"
 #include "osdep/terminal.h"
 #include "osdep/timer.h"
 #include "stream/stream.h"
@@ -1073,6 +1074,13 @@ err:
     return -1;
 }
 
+static void handle_clipboard_changes(struct MPContext *mpctx)
+{
+    bool changed = m_clipboard_poll(mpctx);
+    if (changed)
+        mp_notify_property(mpctx, "clipboard");
+}
+
 // Potentially needed by some Lua scripts, which assume TICK always comes.
 static void handle_dummy_ticks(struct MPContext *mpctx)
 {
@@ -1239,6 +1247,8 @@ void run_playloop(struct MPContext *mpctx)
 
     handle_dummy_ticks(mpctx);
 
+    handle_clipboard_changes(mpctx);
+
     update_osd_msg(mpctx);
 
     handle_update_subtitles(mpctx);
@@ -1278,6 +1288,7 @@ void run_playloop(struct MPContext *mpctx)
 
 void mp_idle(struct MPContext *mpctx)
 {
+    handle_clipboard_changes(mpctx);
     handle_dummy_ticks(mpctx);
     mp_wait_events(mpctx);
     mp_process_input(mpctx);
