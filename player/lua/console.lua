@@ -787,6 +787,8 @@ local function handle_enter()
         return
     end
 
+    line = line:gsub('^%s*', ''):gsub('%s*$', '')
+
     if line == '' and input_caller == nil then
         return
     end
