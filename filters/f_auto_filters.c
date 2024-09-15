@@ -23,6 +23,7 @@ struct deint_priv {
     struct mp_subfilter sub;
     int prev_imgfmt;
     bool deinterlace_active;
+    bool interlaced_frame;
     struct m_config_cache *opts;
 };
 
@@ -47,17 +48,15 @@ static void deint_process(struct mp_filter *f)
     }
 
     struct mp_image *img = frame.data;
-    bool interlaced = img->fields & MP_IMGFIELD_INTERLACED;
+    p->interlaced_frame = img->fields & MP_IMGFIELD_INTERLACED;
 
     m_config_cache_update(p->opts);
     struct filter_opts *opts = p->opts->opts;
-    bool should_deinterlace = (opts->deinterlace == -1 && interlaced) ||
-                               opts->deinterlace == 1;
 
-    if (!should_deinterlace)
+    if (!opts->deinterlace)
         mp_subfilter_destroy(&p->sub);
 
-    if (img->imgfmt == p->prev_imgfmt && p->deinterlace_active == should_deinterlace) {
+    if (img->imgfmt == p->prev_imgfmt && p->deinterlace_active == (opts->deinterlace != 0)) {
         mp_subfilter_continue(&p->sub);
         return;
     }
@@ -68,7 +67,7 @@ static void deint_process(struct mp_filter *f)
     assert(!p->sub.filter);
 
     p->prev_imgfmt = img->imgfmt;
-    p->deinterlace_active = should_deinterlace;
+    p->deinterlace_active = opts->deinterlace != 0;
     if (!p->deinterlace_active) {
         mp_subfilter_continue(&p->sub);
         return;
@@ -89,28 +88,31 @@ static void deint_process(struct mp_filter *f)
     bool has_filter = true;
     if (img->imgfmt == IMGFMT_VDPAU) {
         char *args[] = {"deint", "yes",
+                        "interlaced-only", opts->deinterlace ? "no" : "yes",
                         "parity", field_parity, NULL};
         p->sub.filter =
             mp_create_user_filter(f, MP_OUTPUT_CHAIN_VIDEO, "vdpaupp", args);
     } else if (img->imgfmt == IMGFMT_D3D11) {
         char *args[] = {"deint", "yes",
-                        "interlaced-only", "yes",
+                        "interlaced-only", opts->deinterlace ? "no" : "yes",
                         "parity", field_parity, NULL};
         p->sub.filter =
             mp_create_user_filter(f, MP_OUTPUT_CHAIN_VIDEO, "d3d11vpp", args);
     } else if (img->imgfmt == IMGFMT_CUDA) {
         char *args[] = {"mode", "send_field",
+                        "deint", opts->deinterlace ? "0" : "1",
                         "parity", field_parity, NULL};
         p->sub.filter =
             mp_create_user_filter(f, MP_OUTPUT_CHAIN_VIDEO, "bwdif_cuda", args);
     } else if (img->imgfmt == IMGFMT_VULKAN) {
         char *args[] = {"mode", "send_field",
+                        "deint", opts->deinterlace ? "0" : "1",
                         "parity", field_parity, NULL};
         p->sub.filter =
             mp_create_user_filter(f, MP_OUTPUT_CHAIN_VIDEO, "bwdif_vulkan", args);
     } else if (img->imgfmt == IMGFMT_VAAPI) {
         char *args[] = {"deint", "motion-adaptive",
-                        "interlaced-only", "yes",
+                        "interlaced-only", opts->deinterlace ? "no" : "yes",
                         "parity", field_parity, NULL};
         p->sub.filter =
             mp_create_user_filter(f, MP_OUTPUT_CHAIN_VIDEO, "vavpp", args);
@@ -141,6 +143,7 @@ static void deint_process(struct mp_filter *f)
         }
 
         char *args[] = {"mode", "send_field",
+                        "deint", opts->deinterlace ? "0" : "1",
                         "parity", field_parity, NULL};
         filters[1] =
             mp_create_user_filter(subf, MP_OUTPUT_CHAIN_VIDEO, "bwdif", args);
@@ -190,7 +193,8 @@ static const struct mp_filter_info deint_filter = {
 bool mp_deint_active(struct mp_filter *f)
 {
     struct deint_priv *p = f->priv;
-    return p->deinterlace_active;
+    struct filter_opts *opts = p->opts->opts;
+    return opts->deinterlace || (opts->deinterlace == -1 && p->interlaced_frame);
 }
 
 struct mp_filter *mp_deint_create(struct mp_filter *parent)
