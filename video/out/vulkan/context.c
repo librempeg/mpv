@@ -190,12 +190,19 @@ pl_vulkan mppl_create_vulkan(struct vulkan_opts *opts,
         VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME,
         VK_KHR_VIDEO_QUEUE_EXTENSION_NAME,
         VK_EXT_SHADER_OBJECT_EXTENSION_NAME,
+        VK_NV_OPTICAL_FLOW_EXTENSION_NAME,
         "VK_KHR_video_decode_av1", /* VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME */
+    };
+
+    VkPhysicalDeviceOpticalFlowFeaturesNV optical_flow_feature = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPTICAL_FLOW_FEATURES_NV,
+        .pNext = NULL,
+        .opticalFlow = true,
     };
 
     VkPhysicalDeviceShaderObjectFeaturesEXT shader_object_feature = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT,
-        .pNext = NULL,
+        .pNext = &optical_flow_feature,
         .shaderObject = true,
     };
 
