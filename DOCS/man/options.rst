@@ -899,9 +899,9 @@ Program Behavior
         on whether most of your URLs need youtube-dl parsing.
 
     ``exclude=<URL1|URL2|...``
-        A ``|``-separated list of URL patterns which mpv should not use with
-        youtube-dl. The patterns are matched after the ``http(s)://`` part of
-        the URL.
+        A ``|``-separated list of URL patterns which mpv should not try parsing
+        with youtube-dl first when ``try_ytdl_first`` is ``yes``. The patterns
+        are matched after the ``http(s)://`` part of the URL.
 
         ``^`` matches the beginning of the URL, ``$`` matches its end, and you
         should use ``%`` before any of the characters ``^$()%|,.[]*+-?`` to
@@ -916,6 +916,13 @@ Program Behavior
               will exclude any URL that ends with ``.mkv`` or ``.mp4``.
 
         See more lua patterns here: https://www.lua.org/manual/5.1/manual.html#5.4.1
+
+    ``include=<URL1|URL2|...``
+        A ``|``-separated list of URL patterns which mpv should try to parse with
+        youtube-dl first when ``try_ytdl_first`` is ``no``. The patterns are
+        matched in the same way as ``exclude``.
+
+        Default: ``youtu%.?be|twitch%.tv``
 
     ``all_formats=<yes|no>``
         If 'yes' will attempt to add all formats found reported by youtube-dl
