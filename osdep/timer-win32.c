@@ -21,6 +21,7 @@
 #include <mmsystem.h>
 #include <stdlib.h>
 #include <versionhelpers.h>
+#include <synchapi.h>
 
 #include "timer.h"
 
