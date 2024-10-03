@@ -65,8 +65,6 @@ jobs:
           sudo dpkg --add-architecture i386
           sudo apt-get update
           sudo apt-get install -y ccache g++-mingw-w64 mingw-w64-x86-64-dev mingw-w64-i686-dev gcc-multilib meson nasm ninja-build pkg-config ${{ matrix.wine }}
-          sudo apt-get remove -y meson
-          sudo pip3 install --upgrade meson
 
       - name: Install Meson Wraps
         run: |
