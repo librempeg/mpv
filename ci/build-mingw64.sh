@@ -301,7 +301,7 @@ meson setup $build --cross-file "$prefix_dir/crossfile" \
     --force-fallback-for=mujs  \
     -Dmujs:werror=false        \
     -Dmujs:default_library=static      \
-    -D{libmpv,tests}=true -Dlua=luajit \
+    -D{libmpv}=true -Dlua=luajit \
     -Dd3d11=disabled \
     -D{shaderc,spirv-cross,javascript}=enabled
 
