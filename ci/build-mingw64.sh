@@ -302,7 +302,7 @@ meson setup $build --cross-file "$prefix_dir/crossfile" \
     -Dmujs:werror=false        \
     -Dmujs:default_library=static      \
     -D{libmpv,tests}=true -Dlua=luajit \
-    -D{shaderc,spirv-cross,d3d11,javascript}=enabled
+    -D{shaderc,spirv-cross,javascript}=enabled
 
 meson compile -C $build
 
