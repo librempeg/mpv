@@ -573,3 +573,24 @@ jobs:
         if: ${{ failure() && steps.tests.outcome == 'failure' }}
         run: |
           cat ./build/meson-logs/testlog.txt
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: mpv-${{ matrix.libav }}-${{ matrix.target }}
+          path: mpv-git-*.zip
+      - name: Create Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -xe
+          TAGNAME="${GITHUB_REF#refs/*/}"
+          gh release create -t "Release $TAGNAME" $TAGNAME mpv-git-*.zip
