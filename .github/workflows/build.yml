@@ -576,7 +576,7 @@ jobs:
 
   release:
     name: Release
-    needs: build
+    needs: mingw
     runs-on: ubuntu-latest
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
     steps:
