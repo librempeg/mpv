@@ -69,7 +69,7 @@ void mp_sleep_ns(int64_t ns)
 
     int64_t hrt = mp_start_hires_timers(ns);
     HANDLE timer = CreateWaitableTimerEx(NULL, NULL,
-                                         CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                         0,
                                          TIMER_ALL_ACCESS);
 
     // CREATE_WAITABLE_TIMER_HIGH_RESOLUTION is supported in Windows 10 1803+,
