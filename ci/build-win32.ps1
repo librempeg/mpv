@@ -155,6 +155,15 @@ $projects = @(
         URL = "https://github.com/KhronosGroup/Vulkan-Loader"
         Revision = "main"
         Method = "cmake"
+    },
+    @{
+        Path = "$subprojects/libjxl.wrap"
+        URL = "https://github.com/libjxl/libjxl"
+        Revision = "main"
+        Method = "cmake"
+        Provides = @(
+            "libjxl = jxl-internal_dep"
+        )
     }
 )
 
@@ -188,6 +197,7 @@ meson setup build `
     -Dffmpeg:sdl2=disabled `
     -Dffmpeg:vulkan=auto `
     -Dffmpeg:libdav1d=enabled `
+    -Dffmpeg:libjxl=enabled `
     -Dlcms2:fastfloat=true `
     -Dlcms2:jpeg=disabled `
     -Dlcms2:tiff=disabled `
