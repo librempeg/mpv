@@ -126,11 +126,11 @@ jobs:
           path: ${{ env.CCACHE_DIR }}
           key: ${{ matrix.libav }}-${{ matrix.target }}-${{ steps.get_time.outputs.timestamp }}
 
+      if: ${{ github.event.inputs.github_release == 'true' }}
       - name: Create Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          if: ${{ github.event.inputs.github_release == 'true' }}
             set -xe
             TAGNAME="${GITHUB_REF#refs/*/}"
             gh release create -t "Release $TAGNAME" $TAGNAME mpv-*.zip
