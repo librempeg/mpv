@@ -46,9 +46,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        libav: [librempeg]
+        libav: librempeg
 #       target: [i686-w64-mingw32, x86_64-w64-mingw32]
-        target: [x86_64-w64-mingw32]
+        target: x86_64-w64-mingw32
         include:
 #          - target: i686-w64-mingw32
 #            wine: wine32
