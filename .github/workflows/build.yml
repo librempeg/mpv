@@ -28,6 +28,13 @@ on:
       - 'Copyright'
       - 'README.md'
       - 'RELEASE_NOTES'
+  workflow_dispatch:
+    inputs:
+      github_release:
+        description: 'Upload to Github release'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   mingw:
@@ -576,7 +583,7 @@ jobs:
     name: Release
     needs: mingw
     runs-on: ubuntu-24.04
-    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    if: ${{ github.event.inputs.github_release == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
